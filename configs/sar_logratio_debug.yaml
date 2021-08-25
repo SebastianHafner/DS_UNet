@@ -1,0 +1,12 @@
+_BASE_: "base_sar_differencing.yaml"
+
+DEBUG: True
+SAVE_MODEL: False
+
+MODEL:
+  TYPE: 'unet'
+  IN_CHANNELS: 1
+
+DATASET:
+  MODE: 'sar'
+  SENTINEL1_BANDS: ['VV']

@@ -1,0 +1,24 @@
+_BASE_: "base.yaml"
+
+THRESH: 0.98
+LOGGING: 1
+SAVE_MODEL: True
+
+MODEL:
+  LOSS_TYPE: 'JaccardLikeLoss'
+
+TRAINER:
+  LR: 5e-5
+  EPOCHS: 2000
+  BATCH_SIZE: 6
+
+AUGMENTATION:
+  CROP_TYPE: 'importance' # uniform or importance
+  CROP_SIZE: 32
+  RANDOM_FLIP: True
+  RANDOM_ROTATE: True
+
+DATASET:
+  PATH: '/storage/shafner/urban_change_detection/OSCD_dataset/preprocessed/'
+  TRAIN: ['bercy', 'bordeaux', 'nantes', 'paris', 'rennes', 'saclay_e', 'pisa']
+  TEST: ['montpellier', 'norcia', 'saclay_w', 'valencia', 'milano']

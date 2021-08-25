@@ -1,0 +1,27 @@
+{
+    "root": "C:/Users/hafne/repos/urban_change_detection",
+    "program": "C:/Users/hafne/repos/urban_change_detection/train_model.py",
+    "git": {
+        "remote": "https://github.com/SebastianHafner/urban_change_detection.git",
+        "commit": "22a19ee17944bc0384aecf23ff9398c490f549a6"
+    },
+    "email": "hafnersailing@gmail.com",
+    "codePath": "train_model.py",
+    "startedAt": "2020-04-24T08:33:35.571171",
+    "host": "LAPTOP-FDV56UHQ",
+    "username": "hafne",
+    "executable": "C:\\Users\\hafne\\AppData\\Local\\Continuum\\anaconda3\\envs\\urban_change_detection\\python.exe",
+    "os": "Windows-10-10.0.18362-SP0",
+    "python": "3.7.7",
+    "cpu_count": 12,
+    "args": [
+        "-c",
+        "debug"
+    ],
+    "state": "running",
+    "jobType": null,
+    "mode": "dryrun",
+    "name": "debug",
+    "project": "onera_change_detection",
+    "heartbeatAt": "2020-04-24T08:34:56.555908"
+}

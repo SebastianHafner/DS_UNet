@@ -1,0 +1,16 @@
+_BASE_: "base_optical_differencing.yaml"
+
+DEBUG: True
+SAVE_MODEL: False
+
+MODEL:
+  TYPE: 'unet'
+  IN_CHANNELS: 4
+
+DATASET:
+  MODE: 'optical'
+  SENTINEL2_BANDS: ['B02', 'B03', 'B04', 'B08']
+  INDICES: False
+
+DATALOADER:
+  NUM_WORKERS: 16

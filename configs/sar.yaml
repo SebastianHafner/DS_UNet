@@ -1,0 +1,10 @@
+_BASE_: "base.yaml"
+
+THRESH: 0.98
+
+MODEL:
+  IN_CHANNELS: 2
+
+DATASET:
+  MODE: 'sar'
+  SENTINEL1_BANDS: ['VV']

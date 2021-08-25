@@ -1,0 +1,4 @@
+_BASE_: "new_base.yaml"
+
+AUGMENTATION:
+  CROP_SIZE: 16

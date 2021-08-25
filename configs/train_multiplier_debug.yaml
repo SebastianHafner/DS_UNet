@@ -1,0 +1,10 @@
+_BASE_: "new_base.yaml"
+
+THRESH: 0.0
+DEBUG: True
+
+DATASET:
+  TRAIN_MULTIPLIER: 5
+
+TRAINER:
+  BATCH_SIZE: 64

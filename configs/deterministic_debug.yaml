@@ -1,0 +1,23 @@
+_BASE_: "base.yaml"
+
+THRESH: 0.98
+
+SAVE_MODEL: False
+DEBUG: False
+
+SEED: 7
+
+MODEL:
+  IN_CHANNELS: 2
+
+TRAINER:
+  LR: 1e-2
+
+DATASET:
+  MODE: 'sar'
+  SENTINEL1_BANDS: ['VV']
+
+AUGMENTATION:
+  RANDOM_FLIP: True
+  RANDOM_ROTATE: True
+  CROP_TYPE: 'importance'

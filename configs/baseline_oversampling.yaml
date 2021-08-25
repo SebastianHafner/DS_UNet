@@ -1,0 +1,7 @@
+_BASE_: "new_base.yaml"
+
+DEBUG: False
+SAVE_MODEL: False
+
+AUGMENTATION:
+  OVERSAMPLING: 'pixel'

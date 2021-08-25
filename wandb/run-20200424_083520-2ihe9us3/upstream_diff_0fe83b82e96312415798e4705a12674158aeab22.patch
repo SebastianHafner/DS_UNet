@@ -1,0 +1,1724 @@
+diff --git a/augmentations.py b/augmentations.py
+new file mode 100644
+index 0000000..07585ef
+--- /dev/null
++++ b/augmentations.py
+@@ -0,0 +1,78 @@
++import torchvision.transforms.functional as TF
++import numpy as np
++
++
++class Numpy2Torch(object):
++    def __call__(self, args):
++        input, label, image_path = args
++        input_t = TF.to_tensor(input)
++        label = TF.to_tensor(label)
++        return input_t, label, image_path
++
++
++# Performs uniform cropping on images
++class UniformCrop(object):
++    def __init__(self, crop_size):
++        self.crop_size = crop_size
++
++    def random_crop(self, input, label):
++        image_size = input.shape[-2]
++        crop_limit = image_size - self.crop_size
++        x, y = np.random.randint(0, crop_limit, size=2)
++
++        input = input[y:y+self.crop_size, x:x+self.crop_size, :]
++        label = label[y:y+self.crop_size, x:x+self.crop_size]
++        return input, label
++
++    def __call__(self, args):
++        input, label, image_path = args
++        input, label = self.random_crop(input, label)
++        return input, label, image_path
++
++
++class ImportanceRandomCrop(UniformCrop):
++    def __call__(self, args):
++        input, label, image_path = args
++
++        SAMPLE_SIZE = 5  # an arbitrary number that I came up with
++        BALANCING_FACTOR = 200
++
++        random_crops = [self.random_crop(input, label) for i in range(SAMPLE_SIZE)]
++        # TODO Multi class vs edge mask
++        weights = []
++        for input, label in random_crops:
++            if label.shape[2] >= 4:
++                # Damage detection, multi class, excluding backround
++                weights.append(label[...,:-1].sum())
++            elif label.shape[2] > 1:
++                # Edge Mask, excluding edge masks
++                weights.append(label[...,0].sum())
++            else:
++                weights.append(label.sum())
++        crop_weights = np.array([label.sum() for input, label in random_crops]) + BALANCING_FACTOR
++        crop_weights = crop_weights / crop_weights.sum()
++
++        sample_idx = np.random.choice(SAMPLE_SIZE, p=crop_weights)
++        input, label = random_crops[sample_idx]
++
++        return input, label, image_path
++
++
++class RandomFlipRotate(object):
++    def __call__(self, args):
++        input, label, image_path = args
++        _hflip = np.random.choice([True, False])
++        _vflip = np.random.choice([True, False])
++        _rot = np.random.randint(0, 360)
++
++        if _hflip:
++            input = np.flip(input, axis=0)
++            label = np.flip(label, axis=0)
++
++        if _vflip:
++            input = np.flip(input, axis=1)
++            label = np.flip(label, axis=1)
++
++        input = ndimage.rotate(input, _rot, reshape=False).copy()
++        label = ndimage.rotate(label, _rot, reshape=False).copy()
++        return input, label, image_path
+diff --git a/configs/base.yaml b/configs/base.yaml
+new file mode 100644
+index 0000000..6215269
+--- /dev/null
++++ b/configs/base.yaml
+@@ -0,0 +1,37 @@
++SEED: 7
++
++MODEL:
++  TYPE: 'unet' # should support unet, unet_lstm, siammese_conc, siamese_diff,
++  OUT_CHANNELS: 1
++  IN_CHANNELS: 2
++  LOSS_TYPE: 'FrankensteinLoss'
++
++DATALOADER:
++  NUM_WORKER: 8
++  SHUFFLE: True
++
++DATASET:
++  PATH: '/storage/shafner/urban_change_detection/Onera/'
++  MODE: 'optical' # optical, radar or fusion
++  SENTINEL1:
++    BANDS: ['VV', 'VH']
++    TEMPORAL_MODE: 'bi-temporal'
++  SENTINEL2:
++    BANDS: ['B2', 'B3', 'B4', 'B8', 'B11', 'B12']
++    TEMPORAL_MODE: 'bi-temporal'
++  ALL_CITIES: ['abudhabi', 'aguasclaras', 'beihai', 'beirut', 'bercy', 'bordeaux', 'cupertino', 'hongkong', 'lasvegas',
++               'mumbai', 'nantes', 'paris', 'pisa', 'rennes', 'saclay_e']
++  TEST_CITIES: ['abudhabi']
++
++OUTPUT_BASE_DIR: '/storage/shafner/urban_change_detection/run_logs/'
++
++TRAINER:
++  LR: 1e-4
++  BATCH_SIZE: 16
++  EPOCHS: 50
++
++AUGMENTATION:
++  CROP_TYPE: 'none' # importance or none
++  CROP_SIZE: 32
++  RANDOM_FLIP: True
++  RANDOM_ROTATE: True
+\ No newline at end of file
+diff --git a/configs/debug.yaml b/configs/debug.yaml
+new file mode 100644
+index 0000000..b831938
+--- /dev/null
++++ b/configs/debug.yaml
+@@ -0,0 +1,8 @@
++_BASE_: "base.yaml"
++
++DATASET:
++  MODE: 'optical'
++  SENTINEL2:
++    BANDS: ['B2', 'B3', 'B4', 'B8', 'B11', 'B12']
++    TEMPORAL_MODE: 'bi-temporal'
++  TEST_CITIES: ['abudhabi']
+\ No newline at end of file
+diff --git a/custom.py b/custom.py
+index bd762f1..372e39c 100644
+--- a/custom.py
++++ b/custom.py
+@@ -9,7 +9,7 @@ import torch
+ class MyDataset(Dataset):
+     def __init__(self, csv_path, image_ids, image_folder, label_folder, nb_dates, patch_size):
+         # Read the csv file
+-        self.data_info = pd.read_csv(csv_path)
++        self.data_info = pd.read_csv(str(csv_path))
+ 
+         self.patch_size = patch_size
+         self.nb_dates = nb_dates
+@@ -17,25 +17,27 @@ class MyDataset(Dataset):
+         self.all_imgs = []
+         for nd in self.nb_dates:
+             imgs_i = []
+-            for id in image_ids:
+-                imgs_i.append(np.load(image_folder + id + '/' + id + '_{}.npy'.format(str(nd))))            
++            for city in image_ids:
++                image_file = image_folder / city / f'{city}_{nd}.npy'
++                imgs_i.append(np.load(image_file))
+             self.all_imgs.append(imgs_i)
+ 
+         self.all_labels = []
+-        for id in image_ids:
+-            label = io.imread(label_folder + id + '/cm/' + id + '-cm.tif')
+-            label[label==1]=0
+-            label[label==2]=1
++        for city in image_ids:
++            label_file = label_folder / city / 'cm' / f'{city}-cm.tif'
++            label = io.imread(label_file)
++            label[label == 1] = 0
++            label[label == 2] = 1
+             self.all_labels.append(label)
+ 
+         # Calculate len
+-        self.data_len = self.data_info.shape[0]-1
++        self.data_len = self.data_info.shape[0] - 1
+ 
+     def __getitem__(self, index):
+-        x = int(self.data_info.iloc[:,0][index])
+-        y = int(self.data_info.iloc[:,1][index])
+-        image_id = int(self.data_info.iloc[:,2][index])
+-        transformation_id = int(self.data_info.iloc[:,3][index])
++        x = int(self.data_info.iloc[:, 0][index])
++        y = int(self.data_info.iloc[:, 1][index])
++        image_id = int(self.data_info.iloc[:, 2][index])
++        transformation_id = int(self.data_info.iloc[:, 3][index])
+ 
+         def transform_date(patch, tr_id):
+             if tr_id == 0:
+diff --git a/datasets.py b/datasets.py
+new file mode 100644
+index 0000000..119561b
+--- /dev/null
++++ b/datasets.py
+@@ -0,0 +1,84 @@
++import torch
++from torchvision import transforms
++from pathlib import Path
++import numpy as np
++import augmentations as aug
++import utils
++
++
++class OneraDataset(torch.utils.data.Dataset):
++    def __init__(self, cfg, dataset: str, transform: list = None):
++        super().__init__()
++
++        self.cfg = cfg
++        self.root_dir = Path(cfg.DATASET.PATH)
++
++        if dataset == 'train':
++            self.cities = [city for city in cfg.DATASET.ALL_CITIES if city not in cfg.DATASET.TEST_CITIES]
++        else:
++            self.cities = cfg.DATASET.TEST_CITIES
++
++        self.length = len(self.cities)
++
++        self.transform = transform
++        if transform is None:
++            self.transform = transforms.Compose([aug.Numpy2Torch()])
++
++        self.mode = cfg.DATASET.MODE
++
++        # creating boolean feature vector to subset sentinel 1 and sentinel 2 bands
++        available_features_sentinel1 = ['VV', 'VH']
++        selected_features_sentinel1 = cfg.DATASET.SENTINEL1.BANDS
++        self.s1_feature_selection = self._get_feature_selection(available_features_sentinel1,
++                                                                selected_features_sentinel1)
++        available_features_sentinel2 = ['B2', 'B3', 'B4', 'B8', 'B11', 'B12']
++        selected_features_sentinel2 = cfg.DATALSET.SENTINEL2.BANDS
++        self.s2_feature_selection = self._get_feature_selection(available_features_sentinel2,
++                                                                selected_features_sentinel2)
++
++    def __getitem__(self, index):
++
++        city = self.cities[index]
++
++        img = self._get_sentinel_data(city)
++        label = self._get_label_data(city)
++        img, label = self.transform((img, label))
++
++        sample = {
++            'img': img,
++            'label': label,
++            'city': city
++        }
++
++        return sample
++
++    def _get_sentinel_data(self, city):
++
++        s2_dir = self.root_dir / city / 'sentinel2'
++
++        s2_pre_file = s2_dir / f'sentinel2_{city}_pre.tif'
++        pre, _, _ = utils.read_tif(s2_pre_file)
++
++        s2_post_file = s2_dir / f'sentinel2_{city}_post.tif'
++        post, _, _ = utils.read_tif(s2_post_file)
++
++        img = np.concatenate([pre, post], axis=-1)
++
++        return np.nan_to_num(img).astype(np.float32)
++
++    def _get_label_data(self, city):
++
++        label_file = self.root_dir / city / 'label' / f'urbanchange_{city}.tif'
++        img, _, _ = utils.read_tif(label_file)
++
++        return np.nan_to_num(img).astype(np.float32)
++
++    def _get_feature_selection(self, features, selection):
++        feature_selection = [False for _ in range(len(features))]
++        for feature in selection:
++            i = features.index(feature)
++            feature_selection[i] = True
++        return feature_selection
++
++    def __len__(self):
++        return self.length
+diff --git a/evaluation_metrics.py b/evaluation_metrics.py
+new file mode 100644
+index 0000000..ff54b7c
+--- /dev/null
++++ b/evaluation_metrics.py
+@@ -0,0 +1,39 @@
++import torch
++
++
++def true_pos(y_true, y_pred, dim=0):
++    return torch.sum(y_true * torch.round(y_pred), dim=dim)
++
++
++def false_pos(y_true, y_pred, dim=0):
++    return torch.sum(y_true * (1. - torch.round(y_pred)), dim=dim)
++
++
++def false_neg(y_true, y_pred, dim=0):
++    return torch.sum((1. - y_true) * torch.round(y_pred), dim=dim)
++
++
++def precision(y_true, y_pred, dim):
++    denom = (true_pos(y_true, y_pred, dim) + false_pos(y_true, y_pred, dim))
++    denom = torch.clamp(denom, 10e-05)
++    return true_pos(y_true, y_pred, dim) / denom
++
++
++def recall(y_true, y_pred, dim):
++    denom = (true_pos(y_true, y_pred, dim) + false_neg(y_true, y_pred, dim))
++    denom = torch.clamp(denom, 10e-05)
++    return true_pos(y_true, y_pred, dim) / denom
++
++
++def f1_score(gts: torch.Tensor, preds: torch.Tensor, dim=(-1, -2)):
++    gts = gts.float()
++    preds = preds.float()
++
++    with torch.no_grad():
++        recall_val = recall(gts, preds, dim)
++        precision_val = precision(gts, preds, dim)
++        denom = torch.clamp( (recall_val + precision_val), 10e-5)
++
++        f1 = 2. * recall_val * precision_val / denom
++
++    return f1
+diff --git a/experiment_manager/__init__.py b/experiment_manager/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/experiment_manager/args.py b/experiment_manager/args.py
+new file mode 100644
+index 0000000..1348612
+--- /dev/null
++++ b/experiment_manager/args.py
+@@ -0,0 +1,36 @@
++import argparse
++
++def default_argument_parser():
++    """
++    Create a parser with some common arguments used by detectron2 users.
++
++    Returns:
++        argparse.ArgumentParser:
++    """
++    parser = argparse.ArgumentParser(description="Experiment Args")
++    parser.add_argument('-c',"--config-file", dest='config_file', default="", required=True, metavar="FILE", help="path to config file")
++    parser.add_argument('-d', '--data-dir', dest='data_dir', type=str,
++                      default='', help='dataset directory')
++    parser.add_argument('-o', '--output-dir', dest='log_dir', type=str,
++                      default='', help='output directory')
++    parser.add_argument(
++        "--resume",
++        dest='resume',
++        action="store_true",
++        help="whether to attempt to resume from the checkpoint directory",
++    )
++    parser.add_argument('--resume-from', dest='resume_from', type=str,
++                      default='', help='path of which the model will be loaded from')
++    parser.add_argument("--eval-only", action="store_true", help="perform evaluation only")
++    parser.add_argument("--num-gpus", type=int, default=1, help="number of gpus *per machine*")
++
++    # Hacky hack
++    # parser.add_argument("--eval-training", action="store_true", help="perform evaluation on training set only")
++
++    parser.add_argument(
++        "opts",
++        help="Modify config options using the command-line",
++        default=None,
++        nargs=argparse.REMAINDER,
++    )
++    return parser
+diff --git a/experiment_manager/config/__init__.py b/experiment_manager/config/__init__.py
+new file mode 100644
+index 0000000..69a0114
+--- /dev/null
++++ b/experiment_manager/config/__init__.py
+@@ -0,0 +1,7 @@
++from .config import CfgNode, new_config, global_config
++
++__all__ = [
++    "CfgNode",
++    "new_config",
++    "global_config"
++]
+diff --git a/experiment_manager/config/config.py b/experiment_manager/config/config.py
+new file mode 100644
+index 0000000..045be9c
+--- /dev/null
++++ b/experiment_manager/config/config.py
+@@ -0,0 +1,136 @@
++# Largely taken from FVCore and Detectron2
++
++import logging
++from argparse import ArgumentParser
++from tabulate import tabulate
++from collections import OrderedDict
++import yaml
++from fvcore.common.config import CfgNode as _CfgNode
++# TODO Initialize Cfg from Base Config
++class CfgNode(_CfgNode):
++    """
++    The same as `fvcore.common.config.CfgNode`, but different in:
++
++    1. Use unsafe yaml loading by default.
++      Note that this may lead to arbitrary code execution: you must not
++      load a config file from untrusted sources before manually inspecting
++      the content of the file.
++    2. Support config versioning.
++      When attempting to merge an old config, it will convert the old config automatically.
++
++    """
++    def __init__(self, init_dict=None, key_list=None, new_allowed=False):
++
++        # Always allow merging new configs
++        self.__dict__[CfgNode.NEW_ALLOWED] = True
++        super(CfgNode, self).__init__(init_dict, key_list, True)
++
++
++    # Note that the default value of allow_unsafe is changed to True
++    def merge_from_file(self, cfg_filename: str, allow_unsafe: bool = True) -> None:
++        loaded_cfg = _CfgNode.load_yaml_with_base(cfg_filename, allow_unsafe=allow_unsafe)
++        loaded_cfg = type(self)(loaded_cfg)
++
++        # defaults.py needs to import CfgNode
++        self.merge_from_other_cfg(loaded_cfg)
++
++def new_config():
++    '''
++    Creates a new config based on the default config file
++    :return:
++    '''
++    from .defaults import C
++    return C.clone()
++
++global_config = CfgNode()
++
++class HPConfig():
++    '''
++    A hyperparameter config object
++    '''
++    def __init__(self):
++        self.data = {}
++        self.argparser = ArgumentParser()
++
++    def create_hp(self, name, value, argparse=False, argparse_args={}):
++        '''
++        Creates a new hyperparameter, optionally sourced from argparse external arguments
++        :param name:
++        :param value:
++        :param argparse:
++        :param argparse_args:
++        :return:
++        '''
++        self.data[name] = value
++        if argparse:
++            datatype = type(value)
++            # Handle boolean type
++            if datatype == bool:
++                self.argparser.add_argument(f'--{name}', action='store_true', *argparse_args)
++            else:
++                self.argparser.add_argument(f'--{name}', type=datatype, *argparse_args)
++
++    def parse_args(self):
++        '''
++        Performs a parse operation from the program arguments
++        :return:
++        '''
++        args = self.argparser.parse_known_args()[0]
++        for key, value in args.__dict__.items():
++            # Arg not present, using default
++            if value is None: continue
++            self.data[key] = value
++
++    def __str__(self):
++        '''
++        Converts the HP into a human readable string format
++        :return:
++        '''
++        table = {'hyperparameter': self.data.keys(),
++                'values': list(self.data.values()),
++                 }
++        return tabulate(table, headers='keys', tablefmt="fancy_grid", )
++
++
++    def save_yml(self, file_path):
++        '''
++        Save HP config to a yaml file
++        :param file_path:
++        :return:
++        '''
++        with open(file_path, 'w') as file:
++            yaml.dump(self.data, file, default_flow_style=False)
++
++    def load_yml(self, file_path):
++        '''
++        Load HP Config from a yaml file
++        :param file_path:
++        :return:
++        '''
++        with open(file_path, 'r') as file:
++            yml_hp = yaml.safe_load(file)
++
++        for hp_name, hp_value in yml_hp.items():
++            self.data[hp_name] = hp_value
++
++    def __getattr__(self, name):
++        return self.data[name]
++
++def config(name='default') -> HPConfig:
++    '''
++    Retrives a configuration (optionally, creating it) of the run. If no `name` provided, then 'default' is used
++    :param name: Optional name of the
++    :return: HPConfig object
++    '''
++    # Configuration doesn't exist yet
++    # if name not in _config_data.keys():
++    #     _config_data[name] = HPConfig()
++    # return _config_data[name]
++    pass
++
++def load_from_yml():
++    '''
++    Load a HPConfig from a YML file
++    :return:
++    '''
++    pass
+\ No newline at end of file
+diff --git a/experiment_manager/config/defaults.py b/experiment_manager/config/defaults.py
+new file mode 100644
+index 0000000..b115fb1
+--- /dev/null
++++ b/experiment_manager/config/defaults.py
+@@ -0,0 +1,47 @@
++'''
++This is a global default file, each individual project will have their own respective default file
++'''
++from .config import CfgNode as CN
++
++C = CN()
++
++C.CONFIG_DIR = 'config/'
++C.OUTPUT_BASE_DIR = 'output/'
++
++C.SEED = 7
++
++C.MODEL = CN()
++C.MODEL.TYPE = 'unet'
++C.MODEL.OUT_CHANNELS = 1
++C.MODEL.IN_CHANNELS = 2
++C.MODEL.LOSS_TYPE = 'FrankensteinLoss'
++
++C.DATALOADER = CN()
++C.DATALOADER.NUM_WORKER = 8
++C.DATALOADER.SHUFFLE = True
++
++C.DATASET = CN()
++C.DATASET.PATH = ''
++C.DATASET.MODE = ''
++C.DATASET.SENTINEL1 = CN()
++C.DATASET.SENTINEL1.BANDS = ['VV', 'VH']
++C.DATASET.SENTINEL1.TEMPORAL_MODE = 'bi-temporal'
++C.DATASET.SENTINEL2 = CN()
++C.DATASET.SENTINEL2.BANDS = ['B2', 'B3', 'B4', 'B8', 'B11', 'B12']
++C.DATASET.SENTINEL2.TEMPORAL_MODE = 'bi-temporal'
++C.DATASET.ALL_CITIES = []
++C.DATASET.TEST_CITIES = []
++
++C.OUTPUT_BASE_DIR = ''
++
++C.TRAINER = CN()
++C.TRAINER.LR = 1e-4
++C.TRAINER.BATCH_SIZE = 16
++C.TRAINER.EPOCHS = 50
++
++C.AUGMENTATION = CN()
++C.AUGMENTATION.CROP_TYPE = 'none'
++C.AUGMENTATION.CROP_SIZE = 32
++C.RANDOM_FLIP = True
++C.RANDOM_ROTATE = True
++
+diff --git a/loss_functions.py b/loss_functions.py
+new file mode 100644
+index 0000000..da90711
+--- /dev/null
++++ b/loss_functions.py
+@@ -0,0 +1,119 @@
++import torch
++
++
++def soft_dice_loss(input:torch.Tensor, target:torch.Tensor):
++    input_sigmoid = torch.sigmoid(input)
++    eps = 1e-6
++
++    iflat = input_sigmoid.flatten()
++    tflat = target.flatten()
++    intersection = (iflat * tflat).sum()
++
++    return 1 - ((2. * intersection) /
++                (iflat.sum() + tflat.sum() + eps))
++
++
++def soft_dice_loss_multi_class(input:torch.Tensor, y:torch.Tensor):
++    p = torch.softmax(input, dim=1)
++    eps = 1e-6
++
++    sum_dims= (0, 2, 3) # Batch, height, width
++
++    intersection = (y * p).sum(dim=sum_dims)
++    denom =  (y.sum(dim=sum_dims) + p.sum(dim=sum_dims)).clamp(eps)
++
++    loss = 1 - (2. * intersection / denom).mean()
++    return loss
++
++
++def soft_dice_loss_multi_class_debug(input:torch.Tensor, y:torch.Tensor):
++    p = torch.softmax(input, dim=1)
++    eps = 1e-6
++
++    sum_dims= (0, 2, 3) # Batch, height, width
++
++    intersection = (y * p).sum(dim=sum_dims)
++    denom =  (y.sum(dim=sum_dims) + p.sum(dim=sum_dims)).clamp(eps)
++
++    loss = 1 - (2. * intersection / denom).mean()
++    loss_components = 1 - 2 * intersection/denom
++    return loss, loss_components
++
++
++def generalized_soft_dice_loss_multi_class(input:torch.Tensor, y:torch.Tensor):
++    p = torch.softmax(input, dim=1)
++    eps = 1e-12
++
++    # TODO [B, C, H, W] -> [C, B, H, W] because softdice includes all pixels
++
++    sum_dims= (0, 2, 3) # Batch, height, width
++    ysum = y.sum(dim=sum_dims)
++    wc = 1 / (ysum ** 2 + eps)
++    intersection = ((y * p).sum(dim=sum_dims) * wc).sum()
++    denom =  ((ysum + p.sum(dim=sum_dims)) * wc).sum()
++
++    loss = 1 - (2. * intersection / denom)
++    return loss
++
++
++def jaccard_like_loss_multi_class(input:torch.Tensor, y:torch.Tensor):
++    p = torch.softmax(input, dim=1)
++    eps = 1e-6
++
++    # TODO [B, C, H, W] -> [C, B, H, W] because softdice includes all pixels
++
++    sum_dims= (0, 2, 3) # Batch, height, width
++
++    intersection = (y * p).sum(dim=sum_dims)
++    denom =  (y ** 2 + p ** 2).sum(dim=sum_dims) + (y*p).sum(dim=sum_dims) + eps
++
++    loss = 1 - (2. * intersection / denom).mean()
++    return loss
++
++
++def jaccard_like_loss(input:torch.Tensor, target:torch.Tensor):
++    input_sigmoid = torch.sigmoid(input)
++    eps = 1e-6
++
++    iflat = input_sigmoid.flatten()
++    tflat = target.flatten()
++    intersection = (iflat * tflat).sum()
++    denom = (iflat**2 + tflat**2).sum() - (iflat * tflat).sum() + eps
++
++    return 1 - ((2. * intersection) / denom)
++
++
++def jaccard_like_balanced_loss(input:torch.Tensor, target:torch.Tensor):
++    input_sigmoid = torch.sigmoid(input)
++    eps = 1e-6
++
++    iflat = input_sigmoid.flatten()
++    tflat = target.flatten()
++    intersection = (iflat * tflat).sum()
++    denom = (iflat**2 + tflat**2).sum() - (iflat * tflat).sum() + eps
++    piccard = (2. * intersection)/denom
++
++    n_iflat = 1-iflat
++    n_tflat = 1-tflat
++    neg_intersection = (n_iflat * n_tflat).sum()
++    neg_denom = (n_iflat**2 + n_tflat**2).sum() - (n_iflat * n_tflat).sum()
++    n_piccard = (2. * neg_intersection)/neg_denom
++
++    return 1 - piccard - n_piccard
++
++
++def soft_dice_loss_balanced(input:torch.Tensor, target:torch.Tensor):
++    input_sigmoid = torch.sigmoid(input)
++    eps = 1e-6
++
++    iflat = input_sigmoid.flatten()
++    tflat = target.flatten()
++    intersection = (iflat * tflat).sum()
++
++    dice_pos = ((2. * intersection) /
++                (iflat.sum() + tflat.sum() + eps))
++
++    negatiev_intersection = ((1-iflat) * (1 - tflat)).sum()
++    dice_neg =  (2 * negatiev_intersection) / ((1-iflat).sum() + (1-tflat).sum() + eps)
++
++    return 1 - dice_pos - dice_neg
+\ No newline at end of file
+diff --git a/main.py b/main.py
+deleted file mode 100644
+index 637f287..0000000
+--- a/main.py
++++ /dev/null
+@@ -1,126 +0,0 @@
+-import os
+-import glob
+-import argparse
+-from tqdm import tqdm
+-import torch
+-import torch.nn as nn
+-import torch.nn.functional as F
+-import torch.optim as optim
+-import numpy as np
+-import torchnet as tnt
+-from skimage import io
+-import tools
+-import network
+-import networkL
+-import custom
+-from torch.utils.data import DataLoader
+-
+-train_areas = ['abudhabi', 'beihai', 'aguasclaras', 'beirut', 'bercy', 'bordeaux', 'cupertino',
+-
+-                 'hongkong', 'mumbai', 'nantes', 'rennes', 'saclay_e', 'pisa', 'rennes']
+-
+-csv_file_train = '../myxys_train.csv'
+-csv_file_val = '../myxys_val.csv'
+-img_folder = '../IMGS_PREPROCESSED/' #folder with preprocessed images according to preprocess.py
+-lbl_folder = '../Labels/' #folder with OSCD dataset's labels
+-patch_size=32
+-nb_dates = [1,5] #specify the number of dates you want to use, e.g put [1,2,3,4,5] if you want to use all five dates
+-                 #or [1,2,5] to use just three of them
+-model_type = 'simple' #choose network type ('simple' or 'lstm')
+-                      #'simple' refers to a simple U-Net while 'lstm' refers to a U-Net involving LSTM blocks
+-
+-networks_folder_path = './networks'
+-import sys
+-sys.path.insert(0, networks_folder_path)
+-
+-model_type = 'lstm' #choose network type ('simple' or 'lstm')
+-                      #'simple' refers to a simple U-Net while 'lstm' refers to a U-Net involving LSTM blocks
+-if model_type == 'simple':
+-    model=tools.to_cuda(network.U_Net(4,2,nb_dates))
+-elif model_type=='lstm':
+-    model=tools.to_cuda(networkL.U_Net(4,2,patch_size))
+-else:
+- print 'invalid on_network_argument'
+-
+-change_dataset_train =  custom.MyDataset(csv_file_train, train_areas, img_folder, lbl_folder, nb_dates, patch_size)
+-change_dataset_val =  custom.MyDataset(csv_file_val, train_areas, img_folder, lbl_folder, nb_dates, patch_size)
+-mydataset_val = DataLoader(change_dataset_val, batch_size=32)
+-
+-
+-#images_train, labels_train, images_val, labels_val = tools.make_data(size_len, portion, change_dataset)
+-base_lr=0.0001
+-optimizer = optim.Adam(model.parameters(), lr=base_lr)
+-weight_tensor=torch.FloatTensor(2)
+-weight_tensor[0]= 0.20
+-weight_tensor[1]= 0.80
+-criterion=tools.to_cuda(nn.CrossEntropyLoss(tools.to_cuda(weight_tensor)))
+-confusion_matrix = tnt.meter.ConfusionMeter(2, normalized=True)
+-epochs=60
+-
+-save_folder = 'models' #where to save the models and training progress
+-os.mkdir(save_folder)
+-ff=open('./' + save_folder + '/progress_L2D.txt','w')
+-iter_=0
+-for epoch in range(1,epochs+1):
+-    mydataset = DataLoader(change_dataset_train, batch_size=32, shuffle=True)
+-    model.train()
+-    train_losses = []
+-    confusion_matrix.reset()
+-
+-    for i, batch, in enumerate(tqdm(mydataset)):
+-        img_batch, lbl_batch = batch
+-        img_batch, lbl_batch = tools.to_cuda(img_batch.permute(1,0,2,3,4)), tools.to_cuda(lbl_batch)
+-
+-        optimizer.zero_grad()
+-        output=model(img_batch.float())
+-        output_conf, target_conf = tools.conf_m(output, lbl_batch)
+-        confusion_matrix.add(output_conf, target_conf)
+-
+-        loss=criterion(output, lbl_batch.long())
+-        train_losses.append(loss.item())
+-        loss.backward()
+-        optimizer.step()
+-
+-        _, preds = output.data.max(1)
+-        if iter_ % 100 == 0:
+-         pred = np.argmax(output.data.cpu().numpy()[0], axis=0)
+-         gt = lbl_batch.data.cpu().numpy()[0]
+-         print('Train (epoch {}/{}) [{}/{} ({:.0f}%)]\tLoss: {:.6f}\tAccuracy: {}'.format(
+-                      epoch, epochs, i, len(mydataset),100.*i/len(mydataset), loss.item(), tools.accuracy(pred, gt)))
+-
+-        iter_ += 1
+-        del(img_batch, lbl_batch, loss)
+-
+-    train_acc=(np.trace(confusion_matrix.conf)/float(np.ndarray.sum(confusion_matrix.conf))) *100
+-
+-    print('TRAIN_LOSS: ', '%.3f' % np.mean(train_losses), 'TRAIN_ACC: ', '%.3f' % train_acc)
+-    confusion_matrix.reset()
+-
+-    ##VALIDATION
+-    with torch.no_grad():
+-        model.eval()
+-
+-        val_losses = []
+-
+-        for i, batch, in enumerate(tqdm(mydataset_val)):
+-            img_batch, lbl_batch = batch
+-            img_batch, lbl_batch = tools.to_cuda(img_batch.permute(1,0,2,3,4)), tools.to_cuda(lbl_batch)
+-
+-            output=model(img_batch.float())
+-            loss=criterion(output, lbl_batch.long())
+-            val_losses.append(loss.item())
+-            output_conf, target_conf = tools.conf_m(output, lbl_batch)
+-            confusion_matrix.add(output_conf, target_conf)
+-
+-        print(confusion_matrix.conf)
+-        test_acc=(np.trace(confusion_matrix.conf)/float(np.ndarray.sum(confusion_matrix.conf)))*100
+-        change_acc=confusion_matrix.conf[1,1]/float(confusion_matrix.conf[1,0]+confusion_matrix.conf[1,1])*100
+-        non_ch=confusion_matrix.conf[0,0]/float(confusion_matrix.conf[0,0]+confusion_matrix.conf[0,1])*100
+-        print('VAL_LOSS: ', '%.3f' % np.mean(val_losses), 'VAL_ACC:  ', '%.3f' % test_acc, 'Non_ch_Acc: ', '%.3f' % non_ch, 'Change_Accuracy: ', '%.3f' % change_acc)
+-        confusion_matrix.reset()
+-
+-
+-
+-    tools.write_results(ff, save_folder, epoch, train_acc, test_acc, change_acc, non_ch, np.mean(train_losses), np.mean(val_losses))
+-    if epoch%5==0: #save model every 5 epochs
+-       torch.save(model.state_dict(), './' + save_folder + '/model_{}.pt'.format(epoch))
+diff --git a/make_xys.py b/make_xys.py
+index d189731..4f1aa1c 100644
+--- a/make_xys.py
++++ b/make_xys.py
+@@ -4,109 +4,115 @@ from skimage.transform import rotate, resize
+ import os
+ import cv2
+ import pandas as pd
++from pathlib import Path
+ 
+-train_areas = ['abudhabi', 'beihai', 'aguasclaras', 'beirut', 'bercy', 'bordeaux', 'cupertino',
+-
+-                 'hongkong', 'mumbai', 'nantes', 'rennes', 'saclay_e', 'pisa', 'rennes']
+-
+-FOLDER='../Labels/'
+-
+-step=6
+-patch_s=32
+ 
+ def shuffle(vector):
+-  vector = np.asarray(vector)
+-  p=np.random.permutation(len(vector))
+-  vector=vector[p]
+-  return vector
++    vector = np.asarray(vector)
++    p = np.random.permutation(len(vector))
++    vector = vector[p]
++    return vector
+ 
+ 
+ def sliding_window_train(i_city, labeled_areas, label, window_size, step):
+-    city=[]
+-    fpatches_labels=[]
+-
+-    x=0
+-    while (x!=label.shape[0]):
+-     y=0
+-     while(y!=label.shape[1]):
+-
+-               if (not y+window_size > label.shape[1]) and (not x+window_size > label.shape[0]):
+-                line=np.array([x,y, labeled_areas.index(i_city), 0]) # (x,y) are the saved coordinates, 
+-                                                                     # labeled_areas.index(i_city)... are the image ids, e.g according to train_areas,
+-                                                                           #the indice for abudhabi in the list is 0, for beihai it is 1, for beirut is 3, etc..
+-                                                                     # the fourth element which has been set as 0, represents the transformadion index,
+-                                                                           #which in this case indicates that no data augmentation will be performed for the
+-                                                                           #specific patch 
++    city = []
++    fpatches_labels = []
++
++    x = 0
++    while x != label.shape[0]:
++        y = 0
++        while y != label.shape[1]:
++
++            if (not y + window_size > label.shape[1]) and (not x + window_size > label.shape[0]):
++                line = np.array([x, y, labeled_areas.index(i_city), 0])
++                # (x,y) are the saved coordinates,
++                # labeled_areas.index(i_city)... are the image ids, e.g according to train_areas,
++                # the indice for abudhabi in the list is 0, for beihai it is 1, for beirut is 3, etc..
++                # the fourth element which has been set as 0, represents the transformadion index,
++                # which in this case indicates that no data augmentation will be performed for the
++                # specific patch
++
+                 city.append(line)
+ 
+-                ##############CONDITIONS####################################
++                # CONDITIONS
+                 new_patch_label = label[x:x + window_size, y:y + window_size]
+-                ff=np.where(new_patch_label==2)
+-                perc = ff[0].shape[0]/float(window_size*window_size)
+-                if ff[0].shape[0]==0:
+-                       stride=window_size
++                ff = np.where(new_patch_label == 2)
++                perc = ff[0].shape[0] / float(window_size * window_size)
++                if ff[0].shape[0] == 0:
++                    stride = window_size
+                 else:
+-                       stride=step
+-                if perc>=0.05: #if percentage of change exceeds a threshold, perform data augmentation on this patch
+-                               #Below, 1, 2, 3 are transformation indexes that will be used by the custom dataloader
+-                               #to perform various rotations
+-                       line=np.array([x,y, labeled_areas.index(i_city), 1])
+-                       city.append(line)
+-                       line=np.array([x,y, labeled_areas.index(i_city), 2])
+-                       city.append(line)
+-                       line=np.array([x,y, labeled_areas.index(i_city), 3])
+-                       city.append(line)
+-                 ###############CONDITIONS####################################
+-
+-               if y + window_size == label.shape[1]:
+-                  break
+-
+-               if y + window_size > label.shape[1]:
++                    stride = step
++                if perc >= 0.05:
++                    # if percentage of change exceeds a threshold, perform data augmentation on this patch
++                    # Below, 1, 2, 3 are transformation indexes that will be used by the custom dataloader
++                    # to perform various rotations
++                    line = np.array([x, y, labeled_areas.index(i_city), 1])
++                    city.append(line)
++                    line = np.array([x, y, labeled_areas.index(i_city), 2])
++                    city.append(line)
++                    line=np.array([x, y, labeled_areas.index(i_city), 3])
++                    city.append(line)
++                 # CONDITIONS
++
++            if y + window_size == label.shape[1]:
++                break
++
++            if y + window_size > label.shape[1]:
+                 y = label.shape[1] - window_size
+-               else:
+-                y = y+stride
++            else:
++                y = y + stride
+ 
+-     if x + window_size == label.shape[0]:
+-        break
++        if x + window_size == label.shape[0]:
++            break
+ 
+-     if x + window_size > label.shape[0]:
+-       x = label.shape[0] - window_size
+-     else:
+-      x = x+stride
++        if x + window_size > label.shape[0]:
++            x = label.shape[0] - window_size
++        else:
++            x = x + stride
+ 
+     return np.asarray(city)
+ 
+ 
+-cities=[]
+-for i_city in train_areas:
+- path=FOLDER+'{}/cm/{}-cm.tif'.format(i_city, i_city)
+- im_name = os.path.basename(path)
+- print('icity', i_city)
+- train_gt = io.imread(path)
+- xy_city =  sliding_window_train(i_city, train_areas, train_gt, patch_s, step)
+- cities.append(xy_city)
+-
+-#from all training (x,y) locations, divide 4/5 for training and 1/5 for validation
+-final_cities = np.concatenate(cities, axis=0)
+-size_len = len(final_cities)
+-portion=size_len/5
+-final_cities=shuffle(final_cities)
+-final_cities_train = final_cities[:4*portion]
+-final_cities_val = final_cities[4*portion:]
+-
+-
+-##save train to csv file
+-df = pd.DataFrame({'X': list(final_cities_train[:,0]),
+-                   'Y': list(final_cities_train[:,1]),
+-                   'image_ID': list(final_cities_train[:,2]),
+-                   'transform_ID': list(final_cities_train[:,3]),
+-                   })
+-df.to_csv('../myxys_train.csv', index=False, columns=["X", "Y", "image_ID", "transform_ID"])
+-
+-
+-df = pd.DataFrame({'X': list(final_cities_val[:,0]),
+-                   'Y': list(final_cities_val[:,1]),
+-                   'image_ID': list(final_cities_val[:,2]),
+-                   'transform_ID': list(final_cities_val[:,3]),
+-                   })
+-df.to_csv('../myxys_val.csv', index=False, columns=["X", "Y", "image_ID", "transform_ID"])
++if __name__ == '__main__':
++
++    train_areas = ['abudhabi', 'beihai', 'aguasclaras', 'beirut', 'bercy', 'bordeaux', 'cupertino',
++                   'hongkong', 'mumbai', 'nantes', 'rennes', 'saclay_e', 'pisa', 'rennes']
++
++    FOLDER = Path('C:/Users/hafne/urban_change_detection/data/Onera/')
++
++    step = 6
++    patch_s = 32
++
++    cities = []
++    for i_city in train_areas:
++        file = FOLDER / 'labels' / i_city / 'cm' / f'{i_city}-cm.tif'
++        print('icity', i_city)
++        train_gt = io.imread(file)
++        xy_city = sliding_window_train(i_city, train_areas, train_gt, patch_s, step)
++        cities.append(xy_city)
++
++    # from all training (x,y) locations, divide 4/5 for training and 1/5 for validation
++    final_cities = np.concatenate(cities, axis=0)
++    size_len = len(final_cities)
++    portion = int(size_len / 5)
++    final_cities = shuffle(final_cities)
++    final_cities_train = final_cities[:-portion]
++    final_cities_val = final_cities[-portion:]
++
++    # save train to csv file
++    df = pd.DataFrame({'X': list(final_cities_train[:, 0]),
++                       'Y': list(final_cities_train[:, 1]),
++                       'image_ID': list(final_cities_train[:, 2]),
++                       'transform_ID': list(final_cities_train[:, 3]),
++                       })
++    train_file = FOLDER / 'myxys_train.csv'
++    df.to_csv(str(train_file), index=False, columns=["X", "Y", "image_ID", "transform_ID"])
++
++    # save val to csv file
++    df = pd.DataFrame({'X': list(final_cities_val[:, 0]),
++                       'Y': list(final_cities_val[:, 1]),
++                       'image_ID': list(final_cities_val[:, 2]),
++                       'transform_ID': list(final_cities_val[:, 3]),
++                       })
++    val_file = FOLDER / 'myxys_val.csv'
++    df.to_csv(str(val_file), index=False, columns=["X", "Y", "image_ID", "transform_ID"])
+diff --git a/networks/__init__.py b/networks/__init__.py
+new file mode 100644
+index 0000000..e69de29
+diff --git a/siamunet_conc.py b/networks/siamunet_conc.py
+similarity index 100%
+rename from siamunet_conc.py
+rename to networks/siamunet_conc.py
+diff --git a/siamunet_diff.py b/networks/siamunet_diff.py
+similarity index 100%
+rename from siamunet_diff.py
+rename to networks/siamunet_diff.py
+diff --git a/unet.py b/networks/unet.py
+similarity index 100%
+rename from unet.py
+rename to networks/unet.py
+diff --git a/preprocess.py b/preprocess.py
+index 3038a4a..96f1282 100644
+--- a/preprocess.py
++++ b/preprocess.py
+@@ -1,20 +1,20 @@
+ import cv2
+ from skimage import io
+ import numpy as np
+-import os
+-import glob
++from pathlib import Path
++
+ 
+ def stretch_8bit(band, lower_percent=2, higher_percent=98):
+- a = 0
+- b = 255
+- real_values = band.flatten()
+- real_values = real_values[real_values > 0]
+- c = np.percentile(real_values, lower_percent)
+- d = np.percentile(real_values, higher_percent)
+- t = a + (band - c) * (b - a) / float(d - c)
+- t[t<a] = a
+- t[t>b] = b
+- return t.astype(np.uint8) / 255.
++    a = 0
++    b = 255
++    real_values = band.flatten()
++    real_values = real_values[real_values > 0]
++    c = np.percentile(real_values, lower_percent)
++    d = np.percentile(real_values, higher_percent)
++    t = a + (band - c) * (b - a) / float(d - c)
++    t[t < a] = a
++    t[t > b] = b
++    return t.astype(np.uint8) / 255.
+ 
+ 
+ def histogram_match(source, reference, match_proportion=1.0):
+@@ -57,63 +57,77 @@ def histogram_match(source, reference, match_proportion=1.0):
+ 
+     return target.reshape(orig_shape)
+ 
+-IMG_FOLDER = '../images/' #folder of the form ./IMGS_PREPROCESSED/abudhabi/imgs_1/..(13 tif 2D images of sentinel channels)..
+-                                 #           ./IMGS_PREPROCESSED/abudhabi/imgs_2/..(13 tif 2D images of sentinel channels)..
+-                                 #           ....
+-                                 #           ./IMGS_PREPROCESSED/abudhabi/imgs_n/..(13 tif 2D images of sentinel channels)..
+-                                 #           where n = number of dates
+-
+-nb_dates = [1,2,3,4,5] ##here you specify which dates you want to use
+-channels = ['B01', 'B02', 'B03', 'B04', 'B05', 'B06', 'B07', 'B08', 'B8A', 'B09', 'B10', 'B11', 'B12']
+-
+-#all areas of the OSCD dataset
+-all_areas = ['abudhabi', 'aguasclaras', 'beihai', 'beirut', 'bercy', 'bordeaux', 'brasilia', 'chongqing',
+-        'cupertino', 'dubai', 'hongkong', 'lasvegas', 'milano', 'montpellier', 'mumbai', 'nantes',
+-        'norcia', 'paris', 'pisa', 'rennes', 'rio', 'saclay_e', 'saclay_w', 'valencia']
+-
+-DESTINATION_FOLDER = 'IMGS_PREPROCESSED'
+-os.mkdir('./'+DESTINATION_FOLDER)
+-
+-for i_path in all_areas:
+- print(i_path)
+-
+- date_folders = []
+- for nd in nb_dates:
+-     date_folders.append(list(glob.glob(os.path.join(IMG_FOLDER +i_path+ '/imgs_{}/*.tif'.format(str(nd))))))
+-
+- #B02 channel has the same dimensions with the groundtruth for the labeled images.
+- #So we keep it to reshape the rest of the channels for both labeled images and nonlabeled images
+- gts = [s for s in date_folders[0] if 'B02' in s]
+- gts = io.imread(gts[0])
+-
+- os.mkdir('./'+DESTINATION_FOLDER+'/'+i_path+'/')
+-
+- for nd in nb_dates:
+-      print('date', nd)
+-      imgs = []
+-      if nd ==1:
+-         for ch in channels:
+-             im = [s for s in date_folders[nd-1] if ch in s]
+-             im=io.imread(im[0])
+-             im[im>5500]=5500
+-             im=stretch_8bit(im)
+-             im=cv2.resize(im, (gts.shape[1], gts.shape[0]))
+-             im=np.reshape(im, (gts.shape[0], gts.shape[1], 1))
+-             imgs.append(im)
+-         imgs0 = imgs
+-      else:
+-
+-         for ch in channels:
+-             im = [s for s in date_folders[nd-1] if ch in s]
+-             im=io.imread(im[0])
+-             im[im>5500]=5500
+-             im=stretch_8bit(im)
+-             im=histogram_match(im, imgs0[channels.index(ch)])
+-             im=cv2.resize(im, (gts.shape[1], gts.shape[0]))
+-             im=np.reshape(im, (gts.shape[0], gts.shape[1], 1))
+-             imgs.append(im)
+-
+-      im_merge = np.stack(imgs, axis=2)
+-      im_merge = np.asarray(im_merge)
+-      im_merge = np.reshape(im_merge, (im_merge.shape[0], im_merge.shape[1], im_merge.shape[2]))
+-      np.save('./'+ DESTINATION_FOLDER+'/'+i_path+'/'+i_path+'_{}.npy'.format(str(nd)), im_merge)
++
++if __name__ == '__main__':
++
++    FOLDER = Path('C:/Users/hafne/urban_change_detection/data/Onera/')
++
++    IMG_FOLDER = FOLDER / 'images'
++    # folder of the form ./IMGS_PREPROCESSED/abudhabi/imgs_1/..(13 tif 2D images of sentinel channels)..
++    # ./IMGS_PREPROCESSED/abudhabi/imgs_2/..(13 tif 2D images of sentinel channels)..
++    # ....
++    # ./IMGS_PREPROCESSED/abudhabi/imgs_n/..(13 tif 2D images of sentinel channels)..
++    # where n = number of dates
++
++    # here you specify which dates you want to use
++    nb_dates = [1, 2]
++    channels = ['B01', 'B02', 'B03', 'B04', 'B05', 'B06', 'B07', 'B08', 'B8A', 'B09', 'B10', 'B11', 'B12']
++
++    # all areas of the OSCD dataset
++    all_areas = ['abudhabi', 'aguasclaras', 'beihai', 'beirut', 'bercy', 'bordeaux', 'brasilia', 'chongqing',
++                 'cupertino', 'dubai', 'hongkong', 'lasvegas', 'milano', 'montpellier', 'mumbai', 'nantes',
++                 'norcia', 'paris', 'pisa', 'rennes', 'rio', 'saclay_e', 'saclay_w', 'valencia']
++
++    DESTINATION_FOLDER = FOLDER / 'images_preprocessed'
++    if not DESTINATION_FOLDER.exists():
++        DESTINATION_FOLDER.mkdir()
++
++    for i_path in all_areas:
++        print(i_path)
++
++        date_folders = []
++        for nd in nb_dates:
++            temp_path = IMG_FOLDER / i_path / f'imgs_{nd}'
++            files = [file for file in temp_path.glob('**/*')]
++            date_folders.append(files)
++
++        # B02 channel has the same dimensions with the groundtruth for the labeled images.
++        # So we keep it to reshape the rest of the channels for both labeled images and nonlabeled images
++        gts = [s for s in date_folders[0] if 'B02' in str(s)]
++        gts = io.imread(gts[0])
++
++        temp_path = DESTINATION_FOLDER / i_path
++        if not temp_path.exists():
++            temp_path.mkdir()
++
++        for nd in nb_dates:
++            print('date', nd)
++            imgs = []
++            if nd == 1:
++                for ch in channels:
++                    im = [s for s in date_folders[nd-1] if ch in str(s)]
++                    im = io.imread(im[0])
++                    im[im > 5500] = 5500
++                    im = stretch_8bit(im)
++                    im = cv2.resize(im, (gts.shape[1], gts.shape[0]))
++                    im = np.reshape(im, (gts.shape[0], gts.shape[1], 1))
++                    imgs.append(im)
++                imgs0 = imgs
++            else:
++
++                for ch in channels:
++                    im = [s for s in date_folders[nd-1] if ch in str(s)]
++                    im = io.imread(im[0])
++                    im[im > 5500] = 5500
++                    im = stretch_8bit(im)
++                    im = histogram_match(im, imgs0[channels.index(ch)])
++                    im = cv2.resize(im, (gts.shape[1], gts.shape[0]))
++                    im = np.reshape(im, (gts.shape[0], gts.shape[1], 1))
++                    imgs.append(im)
++
++            im_merge = np.stack(imgs, axis=2)
++            im_merge = np.asarray(im_merge)
++            im_merge = np.reshape(im_merge, (im_merge.shape[0], im_merge.shape[1], im_merge.shape[2]))
++
++            im_file = DESTINATION_FOLDER / i_path / f'{i_path}_{nd}.npy'
++            np.save(str(im_file), im_merge)
+diff --git a/preprocessing.py b/preprocessing.py
+new file mode 100644
+index 0000000..172f4d8
+--- /dev/null
++++ b/preprocessing.py
+@@ -0,0 +1,72 @@
++import numpy as np
++from pathlib import Path
++import utils
++
++
++def get_band(file: Path) -> str:
++    return file.stem.split('_')[-1]
++
++
++def combine_bands(folder: Path) -> tuple:
++
++    bands = ['B2', 'B3', 'B4', 'B8', 'B11', 'B12']
++    n_bands = len(bands)
++
++    data = {get_band(file): file for file in folder.glob('**/*')}
++
++    # using blue band as reference (10 m)
++    blue, transform, crs = utils.read_tif(data['B1'])
++    h, w, _ = blue.shape
++
++    img = np.ndarray((h, w, n_bands), dtype=np.float16)
++    for i, band in enumerate(bands):
++        arr, _, _ = utils.read_tif(data[band])
++
++        # up-sample 20 m bands
++        if not arr.shape == blue.shape:
++            arr = np.repeat(arr, 2, axis=0)
++            arr = np.repeat(arr, 2, axis=1)
++
++        img[:, :, i] = arr
++
++    return img, transform, crs
++
++
++def process_city(img_folder: Path, label_folder: Path, city: str, new_root: Path) -> None:
++
++    new_parent = new_root / city
++    new_parent.mkdir(exist_ok=True)
++
++    # image data
++    for pre_post in ['pre', 'post']:
++
++        # get data
++        from_folder = img_folder / 'imgs_1' if pre_post == 'pre' else img_folder / 'imgs_2'
++        img, transform, crs = combine_bands(from_folder)
++
++        # save data
++        to_folder = new_parent / 'sentinel2'
++        to_folder.mkdir(exist_ok=True)
++        save_file = to_folder / f'sentinel2_{city}_{pre_post}.tif'
++        utils.write_tif(save_file, img, transform, crs)
++
++    label_file = label_folder / city / 'cm' / f'{city}-cm.tif'
++    label, transform, crs = utils.read_tif(label_file)
++    label = label - 1
++
++    new_label_file = new_parent / 'label' / f'urbanchange_{city}.tif'
++    new_label_file.parent.mkdir(exist_ok=True)
++    utils.write_tif(new_label_file, label, transform, crs)
++
++
++if __name__ == '__main__':
++    # assume unchanged Onera dataset
++    IMG_FOLDER = Path()
++    LABEL_FOLDER = Path()
++    NEW_ROOT = Path()
++
++    cities = ['abudhabi', 'aguasclaras', 'beihai', 'beirut', 'bercy', 'bordeaux', 'cupertino', 'hongkong', 'lasvegas',
++              'mumbai', 'nantes', 'paris', 'pisa', 'rennes', 'saclay_e']
++
++    for city in cities:
++        process_city(IMG_FOLDER, LABEL_FOLDER, city, NEW_ROOT)
+diff --git a/tools.py b/tools.py
+index aebe199..960b36f 100644
+--- a/tools.py
++++ b/tools.py
+@@ -12,7 +12,7 @@ from skimage import io
+ import cv2
+ 
+ USE_CUDA = torch.cuda.is_available()
+-DEVICE = 2
++DEVICE = 0
+ def to_cuda(v):
+     if USE_CUDA:
+         return v.cuda(DEVICE)
+diff --git a/train.py b/train.py
+new file mode 100644
+index 0000000..8b24be7
+--- /dev/null
++++ b/train.py
+@@ -0,0 +1,134 @@
++
++import argparse
++from tqdm import tqdm
++import torch
++import torch.nn as nn
++import torch.nn.functional as F
++import torch.optim as optim
++import numpy as np
++import torchnet as tnt
++import tools
++from networks import network, networkL
++import custom
++from torch.utils.data import DataLoader
++from pathlib import Path
++
++
++if __name__ == '__main__':
++
++    train_areas = ['abudhabi', 'beihai', 'aguasclaras', 'beirut', 'bercy', 'bordeaux', 'cupertino',
++                   'hongkong', 'mumbai', 'nantes', 'rennes', 'saclay_e', 'pisa', 'rennes']
++
++    # FOLDER = Path('C:/Users/hafne/urban_change_detection/data/Onera/')
++    FOLDER = Path('/storage/shafner/urban_change_detection/Onera/')
++
++
++    csv_file_train = FOLDER / 'myxys_train.csv'
++    csv_file_val = FOLDER / 'myxys_val.csv'
++    img_folder = FOLDER / 'images_preprocessed'  # folder with preprocessed images according to preprocess.py
++    lbl_folder = FOLDER / 'labels'  # folder with OSCD dataset's labels
++    save_folder = FOLDER / 'save_models'
++    save_folder.mkdir(exist_ok=True)
++
++    patch_size = 32
++
++    # specify the number of dates you want to use, e.g put [1,2,3,4,5] if you want to use all five dates
++    # or [1,2,5] to use just three of them
++    nb_dates = [1, 2]
++
++    # setting device on GPU if available, else CPU
++    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
++    print('Using device:', device)
++
++
++    model_type = 'simple' #choose network type ('simple' or 'lstm')
++                          #'simple' refers to a simple U-Net while 'lstm' refers to a U-Net involving LSTM blocks
++
++    model_type = 'simple' #choose network type ('simple' or 'lstm')
++                          #'simple' refers to a simple U-Net while 'lstm' refers to a U-Net involving LSTM blocks
++    if model_type == 'simple':
++        net = network.U_Net(4, 2, nb_dates)
++    elif model_type == 'lstm':
++        net = networkL.U_Net(4, 2, patch_size)
++    else:
++        net = None
++        print('invalid on_network_argument')
++
++    model = tools.to_cuda(net)
++
++    change_dataset_train = custom.MyDataset(csv_file_train, train_areas, img_folder, lbl_folder, nb_dates, patch_size)
++    change_dataset_val = custom.MyDataset(csv_file_val, train_areas, img_folder, lbl_folder, nb_dates, patch_size)
++    mydataset_val = DataLoader(change_dataset_val, batch_size=32)
++
++    # images_train, labels_train, images_val, labels_val = tools.make_data(size_len, portion, change_dataset)
++    base_lr = 0.0001
++    optimizer = optim.Adam(model.parameters(), lr=base_lr)
++    weight_tensor = torch.FloatTensor(2)
++    weight_tensor[0] = 0.20
++    weight_tensor[1] = 0.80
++    criterion = tools.to_cuda(nn.CrossEntropyLoss(tools.to_cuda(weight_tensor)))
++    confusion_matrix = tnt.meter.ConfusionMeter(2, normalized=True)
++    epochs = 60
++
++    save_file = save_folder / 'progress_L2D.txt'
++    save_file.touch(exist_ok=True)
++    # ff = open(save_file, 'w')
++    iter_ = 0
++    for epoch in range(1, epochs + 1):
++        mydataset = DataLoader(change_dataset_train, batch_size=32, shuffle=True)
++        model.train()
++        train_losses = []
++        confusion_matrix.reset()
++
++        for i, batch, in enumerate(mydataset):
++            img_batch, lbl_batch = batch
++            img_batch, lbl_batch = tools.to_cuda(img_batch.permute(1, 0, 2, 3, 4)), tools.to_cuda(lbl_batch)
++
++            optimizer.zero_grad()
++            output = model(img_batch.float())
++            output_conf, target_conf = tools.conf_m(output, lbl_batch)
++            confusion_matrix.add(output_conf, target_conf)
++
++            loss = criterion(output, lbl_batch.long())
++            train_losses.append(loss.item())
++            loss.backward()
++            optimizer.step()
++
++            del(img_batch, lbl_batch, loss)
++
++        train_acc = (np.trace(confusion_matrix.conf) / float(np.ndarray.sum(confusion_matrix.conf))) * 100
++        print(f'train loss: {np.mean(train_losses):.3f}, train acc: {train_acc:.3f}')
++        confusion_matrix.reset()
++        # end of epoch
++
++        # VALIDATION
++        with torch.no_grad():
++            model.eval()
++
++            val_losses = []
++            print(len(mydataset_val))
++
++            for i, batch, in enumerate(mydataset_val):
++                # TODO: maybe fix this (last batch does not work)
++                if i < (len(mydataset_val) - 1):
++                    img_batch, lbl_batch = batch
++                    img_batch, lbl_batch = tools.to_cuda(img_batch.permute(1, 0, 2, 3, 4)), tools.to_cuda(lbl_batch)
++
++                    output = model(img_batch.float())
++                    loss = criterion(output, lbl_batch.long())
++                    val_losses.append(loss.item())
++                    output_conf, target_conf = tools.conf_m(output, lbl_batch)
++                    confusion_matrix.add(output_conf, target_conf)
++
++            print(confusion_matrix.conf)
++            test_acc = (np.trace(confusion_matrix.conf) / float(np.ndarray.sum(confusion_matrix.conf))) * 100
++            change_acc = confusion_matrix.conf[1, 1] / float(confusion_matrix.conf[1, 0] + confusion_matrix.conf[1, 1]) * 100
++            non_ch = confusion_matrix.conf[0, 0] / float(confusion_matrix.conf[0, 0]+confusion_matrix.conf[0, 1]) * 100
++            print(f'val loss: {np.mean(val_losses):.3f}, val acc:  {test_acc:.3f}')
++            print(f'Non_ch_Acc: {non_ch:.3f}, Change_Accuracy: {change_acc:.3f}')
++            confusion_matrix.reset()
++
++        # tools.write_results(ff, save_folder, epoch, train_acc, test_acc, change_acc, non_ch, np.mean(train_losses), np.mean(val_losses))
++        if epoch % 5 == 0:  # save model every 5 epochs
++            model_file = save_folder / f'model_{epoch}.pt'
++            # torch.save(model.state_dict(), model_file)
+diff --git a/train_model.py b/train_model.py
+new file mode 100644
+index 0000000..58edbab
+--- /dev/null
++++ b/train_model.py
+@@ -0,0 +1,197 @@
++# general modules
++import json
++import sys
++import os
++import numpy as np
++
++# learning framework
++import torch
++from torch.utils import data as torch_data
++from torch.nn import functional as F
++from torchvision import transforms
++
++# config for experiments
++from experiment_manager import args
++from experiment_manager.config import config
++
++# custom stuff
++import augmentations as aug
++import evaluation_metrics as metrics
++import loss_functions as lf
++import datasets
++
++# all networks
++from networks import network
++
++# logging
++import wandb
++
++
++def setup(args):
++    cfg = config.new_config()
++    cfg.merge_from_file(f'configs/{args.config_file}.yaml')
++    cfg.merge_from_list(args.opts)
++    cfg.NAME = args.config_file
++    return cfg
++
++
++def train(net, cfg):
++
++    # setting device on GPU if available, else CPU
++    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
++    print('Using device:', device)
++
++    net.to(device)
++
++    optimizer = torch.optim.Adam(net.parameters(), lr=cfg.TRAINER.LR, weight_decay=0.0005)
++
++    # loss functions
++    if cfg.MODEL.LOSS_TYPE == 'BCEWithLogitsLoss':
++        criterion = torch.nn.BCEWithLogitsLoss()
++    elif cfg.MODEL.LOSS_TYPE == 'CrossEntropyLoss':
++        balance_weight = [cfg.MODEL.NEGATIVE_WEIGHT, cfg.MODEL.POSITIVE_WEIGHT]
++        balance_weight = torch.tensor(balance_weight).float().to(device)
++        criterion = torch.nn.CrossEntropyLoss(weight=balance_weight)
++    elif cfg.MODEL.LOSS_TYPE == 'SoftDiceLoss':
++        criterion = lf.soft_dice_loss
++    elif cfg.MODEL.LOSS_TYPE == 'SoftDiceBalancedLoss':
++        criterion = lf.soft_dice_loss_balanced
++    elif cfg.MODEL.LOSS_TYPE == 'JaccardLikeLoss':
++        criterion = lf.jaccard_like_loss
++    elif cfg.MODEL.LOSS_TYPE == 'ComboLoss':
++        criterion = lambda pred, gts: F.binary_cross_entropy_with_logits(pred, gts) + lf.soft_dice_loss(pred, gts)
++    elif cfg.MODEL.LOSS_TYPE == 'WeightedComboLoss':
++        criterion = lambda pred, gts: 2 * F.binary_cross_entropy_with_logits(pred, gts) + lf.soft_dice_loss(pred, gts)
++    elif cfg.MODEL.LOSS_TYPE == 'FrankensteinLoss':
++        criterion = lambda pred, gts: F.binary_cross_entropy_with_logits(pred, gts) + lf.jaccard_like_balanced_loss(pred, gts)
++
++    trfm = []
++    if cfg.AUGMENTATION.CROP_TYPE == 'uniform':
++        trfm.append(aug.UniformCrop(crop_size=cfg.AUGMENTATION.CROP_SIZE))
++    elif cfg.AUGMENTATION.CROP_TYPE == 'importance':
++        trfm.append(aug.ImportanceRandomCrop(crop_size=cfg.AUGMENTATION.CROP_SIZE))
++
++    # TODO: separate for flip and rotate
++    if cfg.AUGMENTATION.RANDOM_FLIP and cfg.AUGMENTATION.RANDOM_ROTATE:
++        trfm.append(aug.RandomFlipRotate())
++    trfm.append(aug.Npy2Torch())
++    trfm = transforms.Compose(trfm)
++
++    # reset the generators
++    dataset = datasets.OneraDataset(cfg, 'train', trfm)
++    dataloader_kwargs = {
++        'batch_size': cfg.TRAINER.BATCH_SIZE,
++        'num_workers': cfg.DATALOADER.NUM_WORKER,
++        'shuffle':cfg.DATALOADER.SHUFFLE,
++        'drop_last': True,
++        'pin_memory': True,
++    }
++    dataloader = torch_data.DataLoader(dataset, **dataloader_kwargs)
++
++    epochs = cfg.TRAINER.EPOCHS
++
++    for epoch in range(1, epochs + 1):
++        print(f'Starting epoch {epoch}/{epochs}.')
++
++        epoch_loss = 0
++        net.train()
++
++        loss_set, f1_set = [], []
++        precision_set, recall_set = [], []
++        positive_pixels_set = []  # Used to evaluated image over sampling techniques
++
++        for i, batch in enumerate(dataloader):
++            optimizer.zero_grad()
++
++            x = batch['img'].to(device)
++            y_gts = batch['label'].to(device)
++
++            y_pred = net(x)
++
++            loss = criterion(y_pred, y_gts)
++
++            epoch_loss += loss.item()
++
++            loss.backward()
++            optimizer.step()
++
++            loss_set.append(loss.item())
++
++        # evaluate model after every epoch
++        model_eval(net, cfg, device, run_type='test', epoch=epoch)
++        model_eval(net, cfg, device, run_type='train', epoch=epoch)
++
++
++def model_eval(net, cfg, device, run_type, epoch):
++
++
++    def evaluate(y_true, y_pred, img_filename):
++        y_true = y_true.detach()
++        y_pred = y_pred.detach()
++        y_true_set.append(y_true.cpu())
++        y_pred_set.append(y_pred.cpu())
++
++        measurer.add_sample(y_true, y_pred)
++
++    # transformations
++    trfm = []
++    trfm.append(aug.Numpy2Torch())
++    trfm = transforms.Compose(trfm)
++
++    dataset = datasets.OneraDataset(cfg, run_type, trfm)
++    inference_loop(net, cfg, device, evaluate, max_samples = max_samples, dataset=dataset)
++
++    # Summary gathering ===
++
++    print(f'Computing {run_type} F1 score ', end=' ', flush=True)
++
++    f1 = measurer.compute_f1()
++    fpr, fnr = measurer.compute_basic_metrics()
++    maxF1 = f1.max()
++    argmaxF1 = f1.argmax()
++    best_fpr = fpr[argmaxF1]
++    best_fnr = fnr[argmaxF1]
++    print(maxF1.item(), flush=True)
++
++    set_name = 'test_set' if run_type == 'TEST' else 'training_set'
++    wandb.log({f'{set_name} max F1': maxF1,
++               f'{set_name} argmax F1': argmaxF1,
++               # f'{set_name} Average Precision': ap,
++               f'{set_name} false positive rate': best_fpr,
++               f'{set_name} false negative rate': best_fnr,
++               'step': step,
++               'epoch': epoch,
++               })
++
++
++
++
++if __name__ == '__main__':
++
++    # setting up config based on parsed argument
++    parser = args.default_argument_parser()
++    args = parser.parse_known_args()[0]
++    cfg = setup(args)
++
++    # TODO: load network from config
++    net = network.U_Net(cfg.MODEL.IN_CHANNELS, cfg.MODEL.OUT_CHANNELS, [1, 2])
++
++    wandb.init(
++        name=cfg.NAME,
++        project='onera_change_detection',
++        tags=['run', 'change', 'detection', ],
++    )
++
++    torch.manual_seed(cfg.SEED)
++    np.random.seed(cfg.SEED)
++    torch.backends.cudnn.deterministic = True
++    torch.backends.cudnn.benchmark = False
++
++    try:
++        train(net, cfg)
++    except KeyboardInterrupt:
++        print('Training terminated')
++        try:
++            sys.exit(0)
++        except SystemExit:
++            os._exit(0)
+diff --git a/utils.py b/utils.py
+new file mode 100644
+index 0000000..10afe6e
+--- /dev/null
++++ b/utils.py
+@@ -0,0 +1,43 @@
++import torch
++import rasterio
++from pathlib import Path
++
++
++# reading in geotiff file as numpy array
++def read_tif(file: Path):
++
++    if not file.exists():
++        raise FileNotFoundError(f'File {file} not found')
++
++    with rasterio.open(file) as dataset:
++        arr = dataset.read()  # (bands X height X width)
++        transform = dataset.transform
++        crs = dataset.crs
++
++    return arr.transpose((1, 2, 0)), transform, crs
++
++
++# writing an array to a geo tiff file
++def write_tif(file: Path, arr, transform, crs):
++
++    if not file.parent.exists():
++        file.parent.mkdir()
++
++    height, width, bands = arr.shape
++    with rasterio.open(
++            file,
++            'w',
++            driver='GTiff',
++            height=height,
++            width=width,
++            count=bands,
++            dtype=arr.dtype,
++            crs=crs,
++            transform=transform,
++    ) as dst:
++        for i in range(bands):
++            dst.write(arr[:, :, i], i + 1)
++
++
++def to_numpy(tensor:torch.Tensor):
++    return tensor.cpu().detach().numpy()

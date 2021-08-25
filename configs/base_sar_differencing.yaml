@@ -1,0 +1,39 @@
+SEED: 7
+THRESH: 0.0
+DEBUG: False
+SAVE_MODEL: True
+LOGGING: 1
+MODEL:
+  TYPE: 'unet' # should support unet, unet_lstm, siammese_conc, siamese_diff,
+  TOPOLOGY: [64, 128, 256, 512,]
+  OUT_CHANNELS: 1
+  IN_CHANNELS: 26
+  LOSS_TYPE: 'JaccardLikeLoss'
+  POSITIVE_WEIGHT: 0.9
+  PRINT_SUMMARY: False
+DATALOADER:
+  NUM_WORKER: 16
+  SHUFFLE: True
+DATASET:
+  PATH: '/storage/shafner/urban_change_detection/OSCD_dataset/preprocessed/'
+  MODE: 'sar' # optical, sar or fusion
+  SENTINEL1_BANDS: ['VV']
+  SENTINEL2_BANDS: ['B01', 'B02', 'B03', 'B04', 'B05', 'B06', 'B07', 'B08', 'B8A', 'B09', 'B10', 'B11', 'B12']
+  INDICES: False
+  TRAIN: ['aguasclaras', 'bercy', 'bordeaux', 'nantes', 'paris', 'rennes', 'saclay_e', 'abudhabi', 'cupertino',
+          'pisa', 'beihai', 'hongkong', 'beirut', 'mumbai']
+  TEST: ['brasilia', 'montpellier', 'norcia', 'rio', 'saclay_w', 'valencia', 'dubai', 'lasvegas', 'milano',
+         'chongqing']
+  TRAIN_MULTIPLIER: 5
+OUTPUT_BASE_DIR: '/storage/shafner/urban_change_detection/run_logs/'
+TRAINER:
+  LR: 5e-5
+  EPOCHS: 400
+  BATCH_SIZE: 64
+  OPTIMIZER: 'adam' # adam or sdg
+AUGMENTATION:
+  OVERSAMPLING: 'none' # none, pixel or change
+  CROP_TYPE: 'importance' # uniform or importance
+  CROP_SIZE: 32
+  RANDOM_FLIP: True
+  RANDOM_ROTATE: True

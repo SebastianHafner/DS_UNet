@@ -1,0 +1,8 @@
+_BASE_: "base.yaml"
+
+THRESH: 0.76
+LOGGING: 1
+SAVE_MODEL: False
+TRAINER:
+  LR: 1e-5
+  EPOCHS: 2000

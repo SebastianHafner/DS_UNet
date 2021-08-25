@@ -1,0 +1,17 @@
+_BASE_: "base.yaml"
+
+THRESH: 0.98
+
+SEED: 2
+
+SAVE_MODEL: False
+
+MODEL:
+  IN_CHANNELS: 2
+
+DATASET:
+  MODE: 'sar'
+  SENTINEL1_BANDS: ['VV']
+
+DATALOADER:
+  NUM_WORKERS: 16

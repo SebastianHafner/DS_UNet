@@ -1,0 +1,6 @@
+_BASE_: "base.yaml"
+
+THRESH: 0.8
+
+MODEL:
+  LOSS_TYPE: 'FrankensteinLoss'

@@ -1,0 +1,17 @@
+_BASE_: "base.yaml"
+
+THRESH: 0.64 # 56 80
+SEED: 1
+SAVE_MODEL: False
+
+MODEL:
+  TYPE: 'unet'
+  IN_CHANNELS: 26
+
+DATASET:
+  PATH: '/storage/shafner/urban_change_detection/OSCD_dataset/preprocessed/'
+  MODE: 'optical'
+  SENTINEL2_BANDS: ['B01', 'B02', 'B03', 'B04', 'B05', 'B06', 'B07', 'B08', 'B8A', 'B09', 'B10', 'B11', 'B12']
+
+DATALOADER:
+  NUM_WORKERS: 16

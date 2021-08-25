@@ -1,0 +1,20 @@
+_BASE_: "new_base.yaml"
+
+DEBUG: True
+
+TRAINER:
+  EPOCHS: 10
+
+MODEL:
+  OUT_CHANNELS: 1
+  IN_CHANNELS: 2
+
+DATASET:
+  MODE: 'radar' # optical, radar or fusion
+  SENTINEL1:
+    BANDS: ['VV']
+    TEMPORAL_MODE: 'bi-temporal'
+  TRAIN: ['aguasclaras', 'bercy', 'bordeaux', 'nantes', 'paris', 'rennes', 'saclay_e', 'abudhabi', 'cupertino',
+          'pisa', 'beihai', 'hongkong', 'beirut', 'mumbai']
+  TEST: ['brasilia', 'montpellier', 'norcia', 'rio', 'saclay_w', 'valencia', 'dubai', 'lasvegas', 'milano',
+        'chongqing']

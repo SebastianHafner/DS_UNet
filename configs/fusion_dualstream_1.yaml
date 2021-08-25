@@ -1,0 +1,14 @@
+_BASE_: "base.yaml"
+
+SEED: 1
+SAVE_MODEL: False
+THRESH: 0.66
+
+MODEL:
+  TYPE: 'dualstreamunet'
+  IN_CHANNELS: 28
+
+DATASET:
+  MODE: 'fusion'
+  SENTINEL1_BANDS: ['VV']
+  SENTINEL2_BANDS: ['B01', 'B02', 'B03', 'B04', 'B05', 'B06', 'B07', 'B08', 'B8A', 'B09', 'B10', 'B11', 'B12']

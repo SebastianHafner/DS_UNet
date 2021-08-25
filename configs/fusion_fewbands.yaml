@@ -1,0 +1,13 @@
+_BASE_: "new_base.yaml"
+
+THRESH: 0.0
+
+MODEL:
+  IN_CHANNELS: 10
+
+DATASET:
+  MODE: 'fusion' # optical, radar or fusion
+  SENTINEL1:
+    BANDS: ['VV']
+  SENTINEL2:
+    BANDS: ['B02', 'B03', 'B04','B08']

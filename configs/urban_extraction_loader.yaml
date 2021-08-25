@@ -1,0 +1,6 @@
+_BASE_: "new_base.yaml"
+
+DATASET:
+  MODE: 'optical'
+  SENTINEL2:
+    BANDS: ['B02', 'B03', 'B04', 'B08', 'B11', 'B12']

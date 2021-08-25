@@ -1,0 +1,6 @@
+_BASE_: "base.yaml"
+
+DATASET:
+  PATH: '/storage/shafner/urban_change_detection/OSCD_dataset/preprocessed/'
+  TRAIN: ['bercy', 'bordeaux', 'nantes', 'paris', 'rennes', 'saclay_e', 'pisa']
+  TEST: ['montpellier', 'norcia', 'saclay_w', 'valencia', 'milano']

@@ -1,0 +1,10 @@
+_BASE_: "base.yaml"
+
+THRESH: 0.8
+LOGGING: 10
+
+MODEL:
+  LOSS_TYPE: 'SoftDiceLoss'
+
+TRAINER:
+  EPOCHS: 1000

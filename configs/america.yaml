@@ -1,0 +1,6 @@
+_BASE_: "base.yaml"
+
+DATASET:
+  PATH: '/storage/shafner/urban_change_detection/OSCD_dataset/preprocessed/'
+  TRAIN: ['aguasclaras', 'cupertino']
+  TEST: ['brasilia', 'rio', 'lasvegas']

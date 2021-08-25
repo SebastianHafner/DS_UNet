@@ -1,0 +1,16 @@
+_BASE_: "base.yaml"
+
+THRESH: 0.0
+LOGGING: 1
+SAVE_MODEL: True
+
+MODEL:
+  LOSS_TYPE: 'JaccardLikeLoss'
+
+TRAINER:
+  LR: 5e-5
+  EPOCHS: 1500
+  BATCH_SIZE: 2
+
+AUGMENTATION:
+  CROP_SIZE: 64

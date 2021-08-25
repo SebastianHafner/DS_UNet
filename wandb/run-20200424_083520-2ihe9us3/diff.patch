@@ -1,0 +1,1274 @@
+diff --git a/augmentations.py b/augmentations.py
+new file mode 100644
+index 0000000..07585ef
+--- /dev/null
++++ b/augmentations.py
+@@ -0,0 +1,78 @@
++import torchvision.transforms.functional as TF
++import numpy as np
++
++
++class Numpy2Torch(object):
++    def __call__(self, args):
++        input, label, image_path = args
++        input_t = TF.to_tensor(input)
++        label = TF.to_tensor(label)
++        return input_t, label, image_path
++
++
++# Performs uniform cropping on images
++class UniformCrop(object):
++    def __init__(self, crop_size):
++        self.crop_size = crop_size
++
++    def random_crop(self, input, label):
++        image_size = input.shape[-2]
++        crop_limit = image_size - self.crop_size
++        x, y = np.random.randint(0, crop_limit, size=2)
++
++        input = input[y:y+self.crop_size, x:x+self.crop_size, :]
++        label = label[y:y+self.crop_size, x:x+self.crop_size]
++        return input, label
++
++    def __call__(self, args):
++        input, label, image_path = args
++        input, label = self.random_crop(input, label)
++        return input, label, image_path
++
++
++class ImportanceRandomCrop(UniformCrop):
++    def __call__(self, args):
++        input, label, image_path = args
++
++        SAMPLE_SIZE = 5  # an arbitrary number that I came up with
++        BALANCING_FACTOR = 200
++
++        random_crops = [self.random_crop(input, label) for i in range(SAMPLE_SIZE)]
++        # TODO Multi class vs edge mask
++        weights = []
++        for input, label in random_crops:
++            if label.shape[2] >= 4:
++                # Damage detection, multi class, excluding backround
++                weights.append(label[...,:-1].sum())
++            elif label.shape[2] > 1:
++                # Edge Mask, excluding edge masks
++                weights.append(label[...,0].sum())
++            else:
++                weights.append(label.sum())
++        crop_weights = np.array([label.sum() for input, label in random_crops]) + BALANCING_FACTOR
++        crop_weights = crop_weights / crop_weights.sum()
++
++        sample_idx = np.random.choice(SAMPLE_SIZE, p=crop_weights)
++        input, label = random_crops[sample_idx]
++
++        return input, label, image_path
++
++
++class RandomFlipRotate(object):
++    def __call__(self, args):
++        input, label, image_path = args
++        _hflip = np.random.choice([True, False])
++        _vflip = np.random.choice([True, False])
++        _rot = np.random.randint(0, 360)
++
++        if _hflip:
++            input = np.flip(input, axis=0)
++            label = np.flip(label, axis=0)
++
++        if _vflip:
++            input = np.flip(input, axis=1)
++            label = np.flip(label, axis=1)
++
++        input = ndimage.rotate(input, _rot, reshape=False).copy()
++        label = ndimage.rotate(label, _rot, reshape=False).copy()
++        return input, label, image_path
+diff --git a/configs/base.yaml b/configs/base.yaml
+index b360487..6215269 100644
+--- a/configs/base.yaml
++++ b/configs/base.yaml
+@@ -2,7 +2,6 @@ SEED: 7
+ 
+ MODEL:
+   TYPE: 'unet' # should support unet, unet_lstm, siammese_conc, siamese_diff,
+-  BINARY_CLASSIFICATION: True
+   OUT_CHANNELS: 1
+   IN_CHANNELS: 2
+   LOSS_TYPE: 'FrankensteinLoss'
+@@ -10,16 +9,19 @@ MODEL:
+ DATALOADER:
+   NUM_WORKER: 8
+   SHUFFLE: True
++
++DATASET:
++  PATH: '/storage/shafner/urban_change_detection/Onera/'
++  MODE: 'optical' # optical, radar or fusion
+   SENTINEL1:
+     BANDS: ['VV', 'VH']
+     TEMPORAL_MODE: 'bi-temporal'
+   SENTINEL2:
+     BANDS: ['B2', 'B3', 'B4', 'B8', 'B11', 'B12']
+     TEMPORAL_MODE: 'bi-temporal'
+-
+-DATASETS:
+-  TRAIN: '/storage/shafner/urban_change_detection/Onera/'
+-  TEST: '/storage/shafner/urban_change_detection/Onera/'
++  ALL_CITIES: ['abudhabi', 'aguasclaras', 'beihai', 'beirut', 'bercy', 'bordeaux', 'cupertino', 'hongkong', 'lasvegas',
++               'mumbai', 'nantes', 'paris', 'pisa', 'rennes', 'saclay_e']
++  TEST_CITIES: ['abudhabi']
+ 
+ OUTPUT_BASE_DIR: '/storage/shafner/urban_change_detection/run_logs/'
+ 
+@@ -30,6 +32,6 @@ TRAINER:
+ 
+ AUGMENTATION:
+   CROP_TYPE: 'none' # importance or none
+-  CROP_SIZE: 1024
++  CROP_SIZE: 32
+   RANDOM_FLIP: True
+   RANDOM_ROTATE: True
+\ No newline at end of file
+diff --git a/configs/debug.yaml b/configs/debug.yaml
+index 1f96ccb..b831938 100644
+--- a/configs/debug.yaml
++++ b/configs/debug.yaml
+@@ -1,2 +1,8 @@
+ _BASE_: "base.yaml"
+ 
++DATASET:
++  MODE: 'optical'
++  SENTINEL2:
++    BANDS: ['B2', 'B3', 'B4', 'B8', 'B11', 'B12']
++    TEMPORAL_MODE: 'bi-temporal'
++  TEST_CITIES: ['abudhabi']
+\ No newline at end of file
+diff --git a/datasets.py b/datasets.py
+new file mode 100644
+index 0000000..119561b
+--- /dev/null
++++ b/datasets.py
+@@ -0,0 +1,84 @@
++import torch
++from torchvision import transforms
++from pathlib import Path
++import numpy as np
++import augmentations as aug
++import utils
++
++
++class OneraDataset(torch.utils.data.Dataset):
++    def __init__(self, cfg, dataset: str, transform: list = None):
++        super().__init__()
++
++        self.cfg = cfg
++        self.root_dir = Path(cfg.DATASET.PATH)
++
++        if dataset == 'train':
++            self.cities = [city for city in cfg.DATASET.ALL_CITIES if city not in cfg.DATASET.TEST_CITIES]
++        else:
++            self.cities = cfg.DATASET.TEST_CITIES
++
++        self.length = len(self.cities)
++
++        self.transform = transform
++        if transform is None:
++            self.transform = transforms.Compose([aug.Numpy2Torch()])
++
++        self.mode = cfg.DATASET.MODE
++
++        # creating boolean feature vector to subset sentinel 1 and sentinel 2 bands
++        available_features_sentinel1 = ['VV', 'VH']
++        selected_features_sentinel1 = cfg.DATASET.SENTINEL1.BANDS
++        self.s1_feature_selection = self._get_feature_selection(available_features_sentinel1,
++                                                                selected_features_sentinel1)
++        available_features_sentinel2 = ['B2', 'B3', 'B4', 'B8', 'B11', 'B12']
++        selected_features_sentinel2 = cfg.DATALSET.SENTINEL2.BANDS
++        self.s2_feature_selection = self._get_feature_selection(available_features_sentinel2,
++                                                                selected_features_sentinel2)
++
++    def __getitem__(self, index):
++
++        city = self.cities[index]
++
++        img = self._get_sentinel_data(city)
++        label = self._get_label_data(city)
++        img, label = self.transform((img, label))
++
++        sample = {
++            'img': img,
++            'label': label,
++            'city': city
++        }
++
++        return sample
++
++    def _get_sentinel_data(self, city):
++
++        s2_dir = self.root_dir / city / 'sentinel2'
++
++        s2_pre_file = s2_dir / f'sentinel2_{city}_pre.tif'
++        pre, _, _ = utils.read_tif(s2_pre_file)
++
++        s2_post_file = s2_dir / f'sentinel2_{city}_post.tif'
++        post, _, _ = utils.read_tif(s2_post_file)
++
++        img = np.concatenate([pre, post], axis=-1)
++
++        return np.nan_to_num(img).astype(np.float32)
++
++    def _get_label_data(self, city):
++
++        label_file = self.root_dir / city / 'label' / f'urbanchange_{city}.tif'
++        img, _, _ = utils.read_tif(label_file)
++
++        return np.nan_to_num(img).astype(np.float32)
++
++    def _get_feature_selection(self, features, selection):
++        feature_selection = [False for _ in range(len(features))]
++        for feature in selection:
++            i = features.index(feature)
++            feature_selection[i] = True
++        return feature_selection
++
++    def __len__(self):
++        return self.length
+diff --git a/evaluation_metrics.py b/evaluation_metrics.py
+new file mode 100644
+index 0000000..ff54b7c
+--- /dev/null
++++ b/evaluation_metrics.py
+@@ -0,0 +1,39 @@
++import torch
++
++
++def true_pos(y_true, y_pred, dim=0):
++    return torch.sum(y_true * torch.round(y_pred), dim=dim)
++
++
++def false_pos(y_true, y_pred, dim=0):
++    return torch.sum(y_true * (1. - torch.round(y_pred)), dim=dim)
++
++
++def false_neg(y_true, y_pred, dim=0):
++    return torch.sum((1. - y_true) * torch.round(y_pred), dim=dim)
++
++
++def precision(y_true, y_pred, dim):
++    denom = (true_pos(y_true, y_pred, dim) + false_pos(y_true, y_pred, dim))
++    denom = torch.clamp(denom, 10e-05)
++    return true_pos(y_true, y_pred, dim) / denom
++
++
++def recall(y_true, y_pred, dim):
++    denom = (true_pos(y_true, y_pred, dim) + false_neg(y_true, y_pred, dim))
++    denom = torch.clamp(denom, 10e-05)
++    return true_pos(y_true, y_pred, dim) / denom
++
++
++def f1_score(gts: torch.Tensor, preds: torch.Tensor, dim=(-1, -2)):
++    gts = gts.float()
++    preds = preds.float()
++
++    with torch.no_grad():
++        recall_val = recall(gts, preds, dim)
++        precision_val = precision(gts, preds, dim)
++        denom = torch.clamp( (recall_val + precision_val), 10e-5)
++
++        f1 = 2. * recall_val * precision_val / denom
++
++    return f1
+diff --git a/experiment_manager/config/defaults.py b/experiment_manager/config/defaults.py
+index 062dfe6..b115fb1 100644
+--- a/experiment_manager/config/defaults.py
++++ b/experiment_manager/config/defaults.py
+@@ -8,28 +8,40 @@ C = CN()
+ C.CONFIG_DIR = 'config/'
+ C.OUTPUT_BASE_DIR = 'output/'
+ 
+-# TRAINER SETTINGS
+-C.TRAINER = CN()
+-C.TRAINER.LR = 0.001
+-C.TRAINER.BATCH_SIZE = 1
+-C.TRAINER.CHECKPOINT_PERIOD = 5000
+-C.TRAINER.EPOCHS = 1
++C.SEED = 7
++
++C.MODEL = CN()
++C.MODEL.TYPE = 'unet'
++C.MODEL.OUT_CHANNELS = 1
++C.MODEL.IN_CHANNELS = 2
++C.MODEL.LOSS_TYPE = 'FrankensteinLoss'
+ 
+-# DATALOADER SETTINGS
+ C.DATALOADER = CN()
+-C.DATALOADER.NUM_WORKER = 1
++C.DATALOADER.NUM_WORKER = 8
+ C.DATALOADER.SHUFFLE = True
+ 
+-# DATASET SETTINGS
+-C.DATASETS = CN()
+-C.DATASETS.TRAIN = ()
+-C.DATASETS.TEST = ()
++C.DATASET = CN()
++C.DATASET.PATH = ''
++C.DATASET.MODE = ''
++C.DATASET.SENTINEL1 = CN()
++C.DATASET.SENTINEL1.BANDS = ['VV', 'VH']
++C.DATASET.SENTINEL1.TEMPORAL_MODE = 'bi-temporal'
++C.DATASET.SENTINEL2 = CN()
++C.DATASET.SENTINEL2.BANDS = ['B2', 'B3', 'B4', 'B8', 'B11', 'B12']
++C.DATASET.SENTINEL2.TEMPORAL_MODE = 'bi-temporal'
++C.DATASET.ALL_CITIES = []
++C.DATASET.TEST_CITIES = []
+ 
+-# Model configs
+-C.MODEL = CN()
+-C.MODEL.BINARY_CLASSIFICATION = False
+-C.MODEL.OUT_CHANNELS = 1
+-C.MODEL.IN_CHANNELS = 3
++C.OUTPUT_BASE_DIR = ''
++
++C.TRAINER = CN()
++C.TRAINER.LR = 1e-4
++C.TRAINER.BATCH_SIZE = 16
++C.TRAINER.EPOCHS = 50
+ 
++C.AUGMENTATION = CN()
++C.AUGMENTATION.CROP_TYPE = 'none'
++C.AUGMENTATION.CROP_SIZE = 32
++C.RANDOM_FLIP = True
++C.RANDOM_ROTATE = True
+ 
+-C.MAX_EPOCHS = 1
+diff --git a/experiment_manager/dataset.py b/experiment_manager/dataset.py
+deleted file mode 100644
+index 5c36901..0000000
+--- a/experiment_manager/dataset.py
++++ /dev/null
+@@ -1,50 +0,0 @@
+-import torch
+-import os
+-import numpy as np
+-import cv2
+-
+-class SimpleInferenceDataset(torch.utils.data.Dataset):
+-    '''
+-    A dataset objects that lists
+-    '''
+-    def __init__(self, dataset_path, file_extension='.png', downsample_scale=None, filter=None):
+-
+-        image_files = []
+-
+-        for filename in os.listdir(dataset_path):
+-            if filename.endswith(file_extension) and filter in filename:
+-                image_files.append(filename)
+-
+-        self.image_files = image_files
+-        self.length = len(image_files)
+-        self.dataset_path = dataset_path
+-        self.downsample_scale = downsample_scale
+-        self.filter = filter
+-
+-    def __getitem__(self, index):
+-        label = np.zeros(1)
+-        image_filename = self.image_files[index]
+-        x = self._process_input(image_filename)
+-        return x, label, image_filename
+-
+-    def _process_input(self, image_filename):
+-        img_path = os.path.join(self.dataset_path, image_filename)
+-        img = cv2.imread(img_path)
+-
+-        if self.downsample_scale is not None:
+-            scale = self.downsample_scale
+-            img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+-
+-        # BGR to RGB
+-        img = img[...,::-1]
+-
+-        img = img.astype(np.float32) / 255.
+-        # move from (x, y, c) to (c, x, y) PyTorch style
+-        img = np.moveaxis(img, -1, 0)
+-
+-        return img
+-
+-
+-    def __len__(self):
+-
+-        return self.length
+\ No newline at end of file
+diff --git a/experiment_manager/engine.py b/experiment_manager/engine.py
+deleted file mode 100644
+index 0a7c344..0000000
+--- a/experiment_manager/engine.py
++++ /dev/null
+@@ -1,248 +0,0 @@
+-from detectron2.engine.train_loop import SimpleTrainer
+-
+-class SimpleTrainer(SimpleTrainer):
+-    """
+-    A trainer with default training logic. Compared to `SimpleTrainer`, it
+-    contains the following logic in addition:
+-
+-    1. Create model, optimizer, scheduler, dataloader from the given config.
+-    2. Load a checkpoint or `cfg.MODEL.WEIGHTS`, if exists.
+-    3. Register a few common hooks.
+-
+-    It is created to simplify the **standard model training workflow** and reduce code boilerplate
+-    for users who only need the standard training workflow, with standard features.
+-    It means this class makes *many assumptions* about your training logic that
+-    may easily become invalid in a new research. In fact, any assumptions beyond those made in the
+-    :class:`SimpleTrainer` are too much for research.
+-
+-    The code of this class has been annotated about restrictive assumptions it mades.
+-    When they do not work for you, you're encouraged to write your own training logic.
+-
+-    Also note that the behavior of this class, like other functions/classes in
+-    this file, is not stable, since it is meant to represent the "common default behavior".
+-    It is only guaranteed to work well with the standard models and training workflow in detectron2.
+-    To obtain more stable behavior, write your own training logic with other public APIs.
+-
+-    Attributes:
+-        scheduler:
+-        checkpointer (DetectionCheckpointer):
+-        cfg (CfgNode):
+-    """
+-
+-    def __init__(self, cfg):
+-        """
+-        Args:
+-            cfg (CfgNode):
+-        """
+-        # Assume these objects must be constructed in this order.
+-        model = self.build_model(cfg)
+-        optimizer = self.build_optimizer(cfg, model)
+-        data_loader = self.build_train_loader(cfg)
+-
+-        # For training, wrap with DDP. But don't need this for inference.
+-        if comm.get_world_size() > 1:
+-            model = DistributedDataParallel(
+-                model, device_ids=[comm.get_local_rank()], broadcast_buffers=False
+-            )
+-        super().__init__(model, data_loader, optimizer)
+-
+-        self.scheduler = self.build_lr_scheduler(cfg, optimizer)
+-        # Assume no other objects need to be checkpointed.
+-        # We can later make it checkpoint the stateful hooks
+-        self.checkpointer = DetectionCheckpointer(
+-            # Assume you want to save checkpoits together with logs/statistics
+-            model,
+-            cfg.OUTPUT_DIR,
+-            optimizer=optimizer,
+-            scheduler=self.scheduler,
+-        )
+-        self.start_iter = 0
+-        self.max_iter = cfg.SOLVER.MAX_ITER
+-        self.cfg = cfg
+-
+-        self.register_hooks(self.build_hooks())
+-
+-    def resume_or_load(self, resume=True):
+-        """
+-        If `resume==True`, and last checkpoint exists, resume from it.
+-
+-        Otherwise, load a model specified by the config.
+-
+-        Args:
+-            resume (bool): whether to do resume or not
+-        """
+-        # The checkpoint stores the training iteration that just finished, thus we start
+-        # at the next iteration (or iter zero if there's no checkpoint).
+-        self.start_iter = (
+-            self.checkpointer.resume_or_load(self.cfg.MODEL.WEIGHTS, resume=resume).get(
+-                "iteration", -1
+-            )
+-            + 1
+-        )
+-
+-    def build_hooks(self):
+-        """
+-        Build a list of default hooks.
+-
+-        Returns:
+-            list[HookBase]:
+-        """
+-        cfg = self.cfg.clone()
+-        cfg.defrost()
+-        cfg.DATALOADER.NUM_WORKERS = 0  # save some memory and time for PreciseBN
+-
+-        ret = [
+-            hooks.IterationTimer(),
+-            hooks.LRScheduler(self.optimizer, self.scheduler),
+-            hooks.PreciseBN(
+-                # Run at the same freq as (but before) evaluation.
+-                cfg.TEST.EVAL_PERIOD,
+-                self.model,
+-                # Build a new data loader to not affect training
+-                self.build_train_loader(cfg),
+-                cfg.TEST.PRECISE_BN.NUM_ITER,
+-            )
+-            if cfg.TEST.PRECISE_BN.ENABLED and get_bn_modules(self.model)
+-            else None,
+-        ]
+-
+-        # Do PreciseBN before checkpointer, because it updates the model and need to
+-        # be saved by checkpointer.
+-        # This is not always the best: if checkpointing has a different frequency,
+-        # some checkpoints may have more precise statistics than others.
+-        if comm.is_main_process():
+-            ret.append(hooks.PeriodicCheckpointer(self.checkpointer, cfg.SOLVER.CHECKPOINT_PERIOD))
+-
+-        def test_and_save_results():
+-            self._last_eval_results = self.test(self.cfg, self.model)
+-            return self._last_eval_results
+-
+-        # Do evaluation after checkpointer, because then if it fails,
+-        # we can use the saved checkpoint to debug.
+-        ret.append(hooks.EvalHook(cfg.TEST.EVAL_PERIOD, test_and_save_results))
+-
+-        if comm.is_main_process():
+-            # run writers in the end, so that evaluation metrics are written
+-            ret.append(hooks.PeriodicWriter(self.build_writers()))
+-        return ret
+-
+-    def build_writers(self):
+-        """
+-        Build a list of default writers, that write metrics to the screen,
+-        a json file, and a tensorboard event file respectively.
+-
+-        Returns:
+-            list[Writer]: a list of objects that have a ``.write`` method.
+-        """
+-        # Assume the default print/log frequency.
+-        return [
+-            # It may not always print what you want to see, since it prints "common" metrics only.
+-            CommonMetricPrinter(self.max_iter),
+-            JSONWriter(os.path.join(self.cfg.OUTPUT_DIR, "metrics.json")),
+-            TensorboardXWriter(self.cfg.OUTPUT_DIR),
+-        ]
+-
+-    def train(self):
+-        """
+-        Run training.
+-
+-        Returns:
+-            OrderedDict of results, if evaluation is enabled. Otherwise None.
+-        """
+-        super().train(self.start_iter, self.max_iter)
+-        if hasattr(self, "_last_eval_results") and comm.is_main_process():
+-            verify_results(self.cfg, self._last_eval_results)
+-            return self._last_eval_results
+-
+-    @classmethod
+-    def build_model(cls, cfg):
+-        """
+-        Returns:
+-            torch.nn.Module:
+-        """
+-        model = build_model(cfg)
+-        logger = logging.getLogger(__name__)
+-        logger.info("Model:\n{}".format(model))
+-        return model
+-
+-    @classmethod
+-    def build_optimizer(cls, cfg, model):
+-        """
+-        Returns:
+-            torch.optim.Optimizer:
+-        """
+-        return build_optimizer(cfg, model)
+-
+-    @classmethod
+-    def build_lr_scheduler(cls, cfg, optimizer):
+-        return build_lr_scheduler(cfg, optimizer)
+-
+-    @classmethod
+-    def build_train_loader(cls, cfg):
+-        """
+-        Returns:
+-            iterable
+-        """
+-        return build_detection_train_loader(cfg)
+-
+-    @classmethod
+-    def build_test_loader(cls, cfg, dataset_name):
+-        """
+-        Returns:
+-            iterable
+-        """
+-        return build_detection_test_loader(cfg, dataset_name)
+-
+-    @classmethod
+-    def build_evaluator(cls, cfg, dataset_name):
+-        """
+-        Returns:
+-            DatasetEvaluator
+-        """
+-        raise NotImplementedError
+-
+-    @classmethod
+-    def test(cls, cfg, model, evaluators=None):
+-        """
+-        Args:
+-            cfg (CfgNode):
+-            model (nn.Module):
+-            evaluators (list[DatasetEvaluator] or None): if None, will call
+-                :meth:`build_evaluator`. Otherwise, must have the same length as
+-                `cfg.DATASETS.TEST`.
+-
+-        Returns:
+-            dict: a dict of result metrics
+-        """
+-        logger = logging.getLogger(__name__)
+-        if isinstance(evaluators, DatasetEvaluator):
+-            evaluators = [evaluators]
+-        if evaluators is not None:
+-            assert len(cfg.DATASETS.TEST) == len(evaluators), "{} != {}".format(
+-                len(cfg.DATASETS.TEST), len(evaluators)
+-            )
+-
+-        results = OrderedDict()
+-        for idx, dataset_name in enumerate(cfg.DATASETS.TEST):
+-            data_loader = cls.build_test_loader(cfg, dataset_name)
+-            # When evaluators are passed in as arguments,
+-            # implicitly assume that evaluators can be created before data_loader.
+-            evaluator = (
+-                evaluators[idx]
+-                if evaluators is not None
+-                else cls.build_evaluator(cfg, dataset_name)
+-            )
+-            results_i = inference_on_dataset(model, data_loader, evaluator)
+-            results[dataset_name] = results_i
+-            if comm.is_main_process():
+-                assert isinstance(
+-                    results_i, dict
+-                ), "Evaluator must return a dict on the main process. Got {} instead.".format(
+-                    results_i
+-                )
+-                logger.info("Evaluation results for {} in csv format:".format(dataset_name))
+-                print_csv_format(results_i)
+-
+-        if len(results) == 1:
+-            results = list(results.values())[0]
+-        return results
+\ No newline at end of file
+diff --git a/experiment_manager/metrics.py b/experiment_manager/metrics.py
+deleted file mode 100644
+index 8e081f3..0000000
+--- a/experiment_manager/metrics.py
++++ /dev/null
+@@ -1,200 +0,0 @@
+-import torch
+-from sklearn.metrics import roc_auc_score, roc_curve
+-import sys
+-
+-
+-def progress(count, total, status=''):
+-    bar_len = 60
+-    filled_len = int(round(bar_len * count / float(total)))
+-
+-    percents = round(100.0 * count / float(total), 1)
+-    bar = '=' * filled_len + '-' * (bar_len - filled_len)
+-
+-    sys.stdout.write('[%s] %s%s ...%s\r' % (bar, percents, '%', status))
+-    sys.stdout.flush()  # As suggested by Rom Ruben (see: http://stackoverflow.com/questions/3173320/text-progress-bar-in-the-console/27871113#comment50529068_27871113)
+-
+-
+-class MultiThresholdMetric():
+-    def __init__(self, threshold):
+-
+-        # FIXME Does not operate properly
+-
+-        '''
+-        Takes in rasterized and batched images
+-        :param y_true: [B, H, W]
+-        :param y_pred: [B, C, H, W]
+-        :param threshold: [Thresh]
+-        '''
+-
+-        self._thresholds = threshold[ :, None, None, None, None] # [Tresh, B, C, H, W]
+-        self._data_dims = (-1, -2, -3, -4) # For a B/W image, it should be [Thresh, B, C, H, W],
+-
+-        self.TP = 0
+-        self.TN = 0
+-        self.FP = 0
+-        self.FN = 0
+-
+-    def _normalize_dimensions(self):
+-        ''' Converts y_truth, y_label and threshold to [B, Thres, C, H, W]'''
+-        # Naively assume that all of existing shapes of tensors, we transform [B, H, W] -> [B, Thresh, C, H, W]
+-        self._thresholds = self._thresholds[ :, None, None, None, None] # [Tresh, B, C, H, W]
+-        # self._y_pred = self._y_pred[None, ...]  # [B, Thresh, C, ...]
+-        # self._y_true = self._y_true[None,:, None, ...] # [Thresh, B,  C, ...]
+-
+-    def add_sample(self, y_true:torch.Tensor, y_pred):
+-        y_true = y_true.bool()[None,...] # [Thresh, B,  C, ...]
+-        y_pred = y_pred[None, ...]  # [Thresh, B, C, ...]
+-        y_pred_offset = (y_pred - self._thresholds + 0.5).round().bool()
+-
+-        self.TP += (y_true & y_pred_offset).sum(dim=self._data_dims).float()
+-        self.TN += (~y_true & ~y_pred_offset).sum(dim=self._data_dims).float()
+-        self.FP += (y_true & ~y_pred_offset).sum(dim=self._data_dims).float()
+-        self.FN += (~y_true & y_pred_offset).sum(dim=self._data_dims).float()
+-
+-    @property
+-    def precision(self):
+-        if hasattr(self, '_precision'):
+-            '''precision previously computed'''
+-            return self._precision
+-
+-        denom = (self.TP + self.FP).clamp(10e-05)
+-        self._precision = self.TP / denom
+-        return self._precision
+-
+-    @property
+-    def recall(self):
+-        if hasattr(self, '_recall'):
+-            '''recall previously computed'''
+-            return self._recall
+-
+-        denom = (self.TP + self.FN).clamp(10e-05)
+-        self._recall = self.TP / denom
+-        return self._recall
+-
+-    def compute_basic_metrics(self):
+-        '''
+-        Computes False Negative Rate and False Positive rate
+-        :return:
+-        '''
+-
+-        false_pos_rate = self.FP/(self.FP + self.TN)
+-        false_neg_rate = self.FN / (self.FN + self.TP)
+-
+-        return false_pos_rate, false_neg_rate
+-
+-    def compute_f1(self):
+-        denom = (self.precision + self.recall).clamp(10e-05)
+-        return 2 * self.precision * self.recall / denom
+-
+-class MultiClassF1():
+-    def __init__(self, ignore_last_class = False):
+-
+-        # FIXME Does not operate properly
+-
+-        '''
+-        Takes in rasterized and batched images
+-        :param y_true: [B, H, W]
+-        :param y_pred: [B, C, H, W]
+-        :param threshold: [Thresh]
+-        '''
+-
+-        self._data_dims = (0, 2, 3) # For a B/W image, it should be [Thresh, B, C, H, W],
+-        self.ignore_last_class = ignore_last_class
+-        self.TP = 0
+-        self.TN = 0
+-        self.FP = 0
+-        self.FN = 0
+-
+-    def add_sample(self, y_true:torch.Tensor, y_pred):
+-        if self.ignore_last_class:
+-            # Ignore background classes
+-
+-            y_pred = y_pred[:, :-1]
+-            y_true = y_true[:, :-1]
+-            y_true_mask = y_true[:, [-1]]
+-
+-
+-        y_true = y_true.bool() # [B,  C, ...]
+-        # Make y_pred one hot along dim C
+-        y_pred_argmax = torch.argmax(y_pred, dim=1, keepdim=True)  # [B, C, ...]
+-        y_pred = torch.zeros_like(y_pred, dtype=torch.bool).scatter_(1, y_pred_argmax,True)
+-
+-        self.TP += (y_true & y_pred).sum(dim=self._data_dims).float()
+-        self.TN += ((~y_true & ~y_pred) * y_true_mask).sum(dim=self._data_dims).float()
+-        self.FP += ((~y_true & y_pred) * y_true_mask).sum(dim=self._data_dims).float()
+-        self.FN += (y_true & ~y_pred).sum(dim=self._data_dims).float()
+-
+-
+-    def compute_basic_metrics(self):
+-        '''
+-        Computes False Negative Rate and False Positive rate
+-        :return:
+-        '''
+-
+-        false_pos_rate = self.FP/(self.FP + self.TN)
+-        false_neg_rate = self.FN / (self.FN + self.TP)
+-
+-        return false_pos_rate, false_neg_rate
+-
+-    def compute_f1(self, include_bg=False):
+-        self.TP = self.TP.clamp(10e-05)
+-        self.TN = self.TN.clamp(10e-05)
+-        self.FP = self.FP.clamp(10e-05)
+-        self.FN = self.FN.clamp(10e-05)
+-        individual_f1 = 2 * self.TP / (2 * self.TP + self.FN + self.FP)
+-        if not include_bg:
+-            individual_f1 = individual_f1[..., :-1]
+-        f1 = len(individual_f1) / (individual_f1 ** -1).sum()
+-
+-        f1 = f1.cpu().item()
+-        individual_f1 = individual_f1.cpu().numpy()
+-        return f1, individual_f1
+-
+-def true_pos(y_true, y_pred, dim=0):
+-    return torch.sum(y_true * torch.round(y_pred), dim=dim) # Only sum along H, W axis, assuming no C
+-
+-
+-def false_pos(y_true, y_pred, dim=0):
+-    return torch.sum(y_true * (1. - torch.round(y_pred)), dim=dim)
+-
+-
+-def false_neg(y_true, y_pred, dim=0):
+-    return torch.sum((1. - y_true) * torch.round(y_pred), dim=dim)
+-
+-
+-def precision(y_true, y_pred, dim):
+-    denom = (true_pos(y_true, y_pred, dim) + false_pos(y_true, y_pred, dim))
+-    denom = torch.clamp(denom, 10e-05)
+-    return true_pos(y_true, y_pred, dim) / denom
+-
+-def recall(y_true, y_pred, dim):
+-    denom = (true_pos(y_true, y_pred, dim) + false_neg(y_true, y_pred, dim))
+-    denom = torch.clamp(denom, 10e-05)
+-    return true_pos(y_true, y_pred, dim) / denom
+-
+-def f1_score(gts:torch.Tensor, preds:torch.Tensor, multi_threashold_mode=False, dim=(-1, -2)):
+-    # FIXME Does not operate proper
+-    gts = gts.float()
+-    preds = preds.float()
+-
+-    if multi_threashold_mode:
+-        gts = gts[:, None, ...] # [B, Thresh, ...]
+-        gts = gts.expand_as(preds)
+-
+-    with torch.no_grad():
+-        recall_val = recall(gts, preds, dim)
+-        precision_val = precision(gts, preds, dim)
+-        denom = torch.clamp( (recall_val + precision_val), 10e-5)
+-
+-        f1 = 2. * recall_val * precision_val / denom
+-
+-    return f1
+-
+-
+-def roc_score(y_true:torch.Tensor, y_preds:torch.Tensor, ):
+-    y_preds = y_preds.flatten().cpu().numpy()
+-    y_true = y_true.flatten().cpu().numpy()
+-
+-    curve = roc_curve(y_true, y_preds, pos_label=1,  drop_intermediate=False)
+-    # print(curve)
+-    return curve
+diff --git a/experiment_manager/utils.py b/experiment_manager/utils.py
+deleted file mode 100644
+index 04b9bf1..0000000
+--- a/experiment_manager/utils.py
++++ /dev/null
+@@ -1,5 +0,0 @@
+-import torch
+-
+-def to_numpy(tensor:torch.Tensor):
+-    return tensor.cpu().detach().numpy()
+-
+diff --git a/experiment_manager/loss.py b/loss_functions.py
+similarity index 98%
+rename from experiment_manager/loss.py
+rename to loss_functions.py
+index c6bbaf0..da90711 100644
+--- a/experiment_manager/loss.py
++++ b/loss_functions.py
+@@ -1,4 +1,6 @@
+ import torch
++
++
+ def soft_dice_loss(input:torch.Tensor, target:torch.Tensor):
+     input_sigmoid = torch.sigmoid(input)
+     eps = 1e-6
+@@ -10,6 +12,7 @@ def soft_dice_loss(input:torch.Tensor, target:torch.Tensor):
+     return 1 - ((2. * intersection) /
+                 (iflat.sum() + tflat.sum() + eps))
+ 
++
+ def soft_dice_loss_multi_class(input:torch.Tensor, y:torch.Tensor):
+     p = torch.softmax(input, dim=1)
+     eps = 1e-6
+@@ -22,6 +25,7 @@ def soft_dice_loss_multi_class(input:torch.Tensor, y:torch.Tensor):
+     loss = 1 - (2. * intersection / denom).mean()
+     return loss
+ 
++
+ def soft_dice_loss_multi_class_debug(input:torch.Tensor, y:torch.Tensor):
+     p = torch.softmax(input, dim=1)
+     eps = 1e-6
+@@ -35,6 +39,7 @@ def soft_dice_loss_multi_class_debug(input:torch.Tensor, y:torch.Tensor):
+     loss_components = 1 - 2 * intersection/denom
+     return loss, loss_components
+ 
++
+ def generalized_soft_dice_loss_multi_class(input:torch.Tensor, y:torch.Tensor):
+     p = torch.softmax(input, dim=1)
+     eps = 1e-12
+@@ -50,6 +55,7 @@ def generalized_soft_dice_loss_multi_class(input:torch.Tensor, y:torch.Tensor):
+     loss = 1 - (2. * intersection / denom)
+     return loss
+ 
++
+ def jaccard_like_loss_multi_class(input:torch.Tensor, y:torch.Tensor):
+     p = torch.softmax(input, dim=1)
+     eps = 1e-6
+@@ -64,6 +70,7 @@ def jaccard_like_loss_multi_class(input:torch.Tensor, y:torch.Tensor):
+     loss = 1 - (2. * intersection / denom).mean()
+     return loss
+ 
++
+ def jaccard_like_loss(input:torch.Tensor, target:torch.Tensor):
+     input_sigmoid = torch.sigmoid(input)
+     eps = 1e-6
+@@ -74,6 +81,8 @@ def jaccard_like_loss(input:torch.Tensor, target:torch.Tensor):
+     denom = (iflat**2 + tflat**2).sum() - (iflat * tflat).sum() + eps
+ 
+     return 1 - ((2. * intersection) / denom)
++
++
+ def jaccard_like_balanced_loss(input:torch.Tensor, target:torch.Tensor):
+     input_sigmoid = torch.sigmoid(input)
+     eps = 1e-6
+@@ -92,6 +101,7 @@ def jaccard_like_balanced_loss(input:torch.Tensor, target:torch.Tensor):
+ 
+     return 1 - piccard - n_piccard
+ 
++
+ def soft_dice_loss_balanced(input:torch.Tensor, target:torch.Tensor):
+     input_sigmoid = torch.sigmoid(input)
+     eps = 1e-6
+diff --git a/preprocessing.py b/preprocessing.py
+new file mode 100644
+index 0000000..172f4d8
+--- /dev/null
++++ b/preprocessing.py
+@@ -0,0 +1,72 @@
++import numpy as np
++from pathlib import Path
++import utils
++
++
++def get_band(file: Path) -> str:
++    return file.stem.split('_')[-1]
++
++
++def combine_bands(folder: Path) -> tuple:
++
++    bands = ['B2', 'B3', 'B4', 'B8', 'B11', 'B12']
++    n_bands = len(bands)
++
++    data = {get_band(file): file for file in folder.glob('**/*')}
++
++    # using blue band as reference (10 m)
++    blue, transform, crs = utils.read_tif(data['B1'])
++    h, w, _ = blue.shape
++
++    img = np.ndarray((h, w, n_bands), dtype=np.float16)
++    for i, band in enumerate(bands):
++        arr, _, _ = utils.read_tif(data[band])
++
++        # up-sample 20 m bands
++        if not arr.shape == blue.shape:
++            arr = np.repeat(arr, 2, axis=0)
++            arr = np.repeat(arr, 2, axis=1)
++
++        img[:, :, i] = arr
++
++    return img, transform, crs
++
++
++def process_city(img_folder: Path, label_folder: Path, city: str, new_root: Path) -> None:
++
++    new_parent = new_root / city
++    new_parent.mkdir(exist_ok=True)
++
++    # image data
++    for pre_post in ['pre', 'post']:
++
++        # get data
++        from_folder = img_folder / 'imgs_1' if pre_post == 'pre' else img_folder / 'imgs_2'
++        img, transform, crs = combine_bands(from_folder)
++
++        # save data
++        to_folder = new_parent / 'sentinel2'
++        to_folder.mkdir(exist_ok=True)
++        save_file = to_folder / f'sentinel2_{city}_{pre_post}.tif'
++        utils.write_tif(save_file, img, transform, crs)
++
++    label_file = label_folder / city / 'cm' / f'{city}-cm.tif'
++    label, transform, crs = utils.read_tif(label_file)
++    label = label - 1
++
++    new_label_file = new_parent / 'label' / f'urbanchange_{city}.tif'
++    new_label_file.parent.mkdir(exist_ok=True)
++    utils.write_tif(new_label_file, label, transform, crs)
++
++
++if __name__ == '__main__':
++    # assume unchanged Onera dataset
++    IMG_FOLDER = Path()
++    LABEL_FOLDER = Path()
++    NEW_ROOT = Path()
++
++    cities = ['abudhabi', 'aguasclaras', 'beihai', 'beirut', 'bercy', 'bordeaux', 'cupertino', 'hongkong', 'lasvegas',
++              'mumbai', 'nantes', 'paris', 'pisa', 'rennes', 'saclay_e']
++
++    for city in cities:
++        process_city(IMG_FOLDER, LABEL_FOLDER, city, NEW_ROOT)
+diff --git a/train_model.py b/train_model.py
+index 7047a3e..58edbab 100644
+--- a/train_model.py
++++ b/train_model.py
+@@ -1,8 +1,30 @@
++# general modules
+ import json
++import sys
++import os
++import numpy as np
+ 
+-from download_manager import args
+-from download_manager.config import config
++# learning framework
++import torch
++from torch.utils import data as torch_data
++from torch.nn import functional as F
++from torchvision import transforms
+ 
++# config for experiments
++from experiment_manager import args
++from experiment_manager.config import config
++
++# custom stuff
++import augmentations as aug
++import evaluation_metrics as metrics
++import loss_functions as lf
++import datasets
++
++# all networks
++from networks import network
++
++# logging
++import wandb
+ 
+ 
+ def setup(args):
+@@ -10,4 +32,166 @@ def setup(args):
+     cfg.merge_from_file(f'configs/{args.config_file}.yaml')
+     cfg.merge_from_list(args.opts)
+     cfg.NAME = args.config_file
+-    return cfg
+\ No newline at end of file
++    return cfg
++
++
++def train(net, cfg):
++
++    # setting device on GPU if available, else CPU
++    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
++    print('Using device:', device)
++
++    net.to(device)
++
++    optimizer = torch.optim.Adam(net.parameters(), lr=cfg.TRAINER.LR, weight_decay=0.0005)
++
++    # loss functions
++    if cfg.MODEL.LOSS_TYPE == 'BCEWithLogitsLoss':
++        criterion = torch.nn.BCEWithLogitsLoss()
++    elif cfg.MODEL.LOSS_TYPE == 'CrossEntropyLoss':
++        balance_weight = [cfg.MODEL.NEGATIVE_WEIGHT, cfg.MODEL.POSITIVE_WEIGHT]
++        balance_weight = torch.tensor(balance_weight).float().to(device)
++        criterion = torch.nn.CrossEntropyLoss(weight=balance_weight)
++    elif cfg.MODEL.LOSS_TYPE == 'SoftDiceLoss':
++        criterion = lf.soft_dice_loss
++    elif cfg.MODEL.LOSS_TYPE == 'SoftDiceBalancedLoss':
++        criterion = lf.soft_dice_loss_balanced
++    elif cfg.MODEL.LOSS_TYPE == 'JaccardLikeLoss':
++        criterion = lf.jaccard_like_loss
++    elif cfg.MODEL.LOSS_TYPE == 'ComboLoss':
++        criterion = lambda pred, gts: F.binary_cross_entropy_with_logits(pred, gts) + lf.soft_dice_loss(pred, gts)
++    elif cfg.MODEL.LOSS_TYPE == 'WeightedComboLoss':
++        criterion = lambda pred, gts: 2 * F.binary_cross_entropy_with_logits(pred, gts) + lf.soft_dice_loss(pred, gts)
++    elif cfg.MODEL.LOSS_TYPE == 'FrankensteinLoss':
++        criterion = lambda pred, gts: F.binary_cross_entropy_with_logits(pred, gts) + lf.jaccard_like_balanced_loss(pred, gts)
++
++    trfm = []
++    if cfg.AUGMENTATION.CROP_TYPE == 'uniform':
++        trfm.append(aug.UniformCrop(crop_size=cfg.AUGMENTATION.CROP_SIZE))
++    elif cfg.AUGMENTATION.CROP_TYPE == 'importance':
++        trfm.append(aug.ImportanceRandomCrop(crop_size=cfg.AUGMENTATION.CROP_SIZE))
++
++    # TODO: separate for flip and rotate
++    if cfg.AUGMENTATION.RANDOM_FLIP and cfg.AUGMENTATION.RANDOM_ROTATE:
++        trfm.append(aug.RandomFlipRotate())
++    trfm.append(aug.Npy2Torch())
++    trfm = transforms.Compose(trfm)
++
++    # reset the generators
++    dataset = datasets.OneraDataset(cfg, 'train', trfm)
++    dataloader_kwargs = {
++        'batch_size': cfg.TRAINER.BATCH_SIZE,
++        'num_workers': cfg.DATALOADER.NUM_WORKER,
++        'shuffle':cfg.DATALOADER.SHUFFLE,
++        'drop_last': True,
++        'pin_memory': True,
++    }
++    dataloader = torch_data.DataLoader(dataset, **dataloader_kwargs)
++
++    epochs = cfg.TRAINER.EPOCHS
++
++    for epoch in range(1, epochs + 1):
++        print(f'Starting epoch {epoch}/{epochs}.')
++
++        epoch_loss = 0
++        net.train()
++
++        loss_set, f1_set = [], []
++        precision_set, recall_set = [], []
++        positive_pixels_set = []  # Used to evaluated image over sampling techniques
++
++        for i, batch in enumerate(dataloader):
++            optimizer.zero_grad()
++
++            x = batch['img'].to(device)
++            y_gts = batch['label'].to(device)
++
++            y_pred = net(x)
++
++            loss = criterion(y_pred, y_gts)
++
++            epoch_loss += loss.item()
++
++            loss.backward()
++            optimizer.step()
++
++            loss_set.append(loss.item())
++
++        # evaluate model after every epoch
++        model_eval(net, cfg, device, run_type='test', epoch=epoch)
++        model_eval(net, cfg, device, run_type='train', epoch=epoch)
++
++
++def model_eval(net, cfg, device, run_type, epoch):
++
++
++    def evaluate(y_true, y_pred, img_filename):
++        y_true = y_true.detach()
++        y_pred = y_pred.detach()
++        y_true_set.append(y_true.cpu())
++        y_pred_set.append(y_pred.cpu())
++
++        measurer.add_sample(y_true, y_pred)
++
++    # transformations
++    trfm = []
++    trfm.append(aug.Numpy2Torch())
++    trfm = transforms.Compose(trfm)
++
++    dataset = datasets.OneraDataset(cfg, run_type, trfm)
++    inference_loop(net, cfg, device, evaluate, max_samples = max_samples, dataset=dataset)
++
++    # Summary gathering ===
++
++    print(f'Computing {run_type} F1 score ', end=' ', flush=True)
++
++    f1 = measurer.compute_f1()
++    fpr, fnr = measurer.compute_basic_metrics()
++    maxF1 = f1.max()
++    argmaxF1 = f1.argmax()
++    best_fpr = fpr[argmaxF1]
++    best_fnr = fnr[argmaxF1]
++    print(maxF1.item(), flush=True)
++
++    set_name = 'test_set' if run_type == 'TEST' else 'training_set'
++    wandb.log({f'{set_name} max F1': maxF1,
++               f'{set_name} argmax F1': argmaxF1,
++               # f'{set_name} Average Precision': ap,
++               f'{set_name} false positive rate': best_fpr,
++               f'{set_name} false negative rate': best_fnr,
++               'step': step,
++               'epoch': epoch,
++               })
++
++
++
++
++if __name__ == '__main__':
++
++    # setting up config based on parsed argument
++    parser = args.default_argument_parser()
++    args = parser.parse_known_args()[0]
++    cfg = setup(args)
++
++    # TODO: load network from config
++    net = network.U_Net(cfg.MODEL.IN_CHANNELS, cfg.MODEL.OUT_CHANNELS, [1, 2])
++
++    wandb.init(
++        name=cfg.NAME,
++        project='onera_change_detection',
++        tags=['run', 'change', 'detection', ],
++    )
++
++    torch.manual_seed(cfg.SEED)
++    np.random.seed(cfg.SEED)
++    torch.backends.cudnn.deterministic = True
++    torch.backends.cudnn.benchmark = False
++
++    try:
++        train(net, cfg)
++    except KeyboardInterrupt:
++        print('Training terminated')
++        try:
++            sys.exit(0)
++        except SystemExit:
++            os._exit(0)
+diff --git a/utils.py b/utils.py
+new file mode 100644
+index 0000000..10afe6e
+--- /dev/null
++++ b/utils.py
+@@ -0,0 +1,43 @@
++import torch
++import rasterio
++from pathlib import Path
++
++
++# reading in geotiff file as numpy array
++def read_tif(file: Path):
++
++    if not file.exists():
++        raise FileNotFoundError(f'File {file} not found')
++
++    with rasterio.open(file) as dataset:
++        arr = dataset.read()  # (bands X height X width)
++        transform = dataset.transform
++        crs = dataset.crs
++
++    return arr.transpose((1, 2, 0)), transform, crs
++
++
++# writing an array to a geo tiff file
++def write_tif(file: Path, arr, transform, crs):
++
++    if not file.parent.exists():
++        file.parent.mkdir()
++
++    height, width, bands = arr.shape
++    with rasterio.open(
++            file,
++            'w',
++            driver='GTiff',
++            height=height,
++            width=width,
++            count=bands,
++            dtype=arr.dtype,
++            crs=crs,
++            transform=transform,
++    ) as dst:
++        for i in range(bands):
++            dst.write(arr[:, :, i], i + 1)
++
++
++def to_numpy(tensor:torch.Tensor):
++    return tensor.cpu().detach().numpy()
