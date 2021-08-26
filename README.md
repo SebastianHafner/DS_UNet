@@ -3,7 +3,7 @@ Code of the following manuscript:
 'Sentinel-1 and Sentinel-2 Data Fusion for Change Detection using a Dual Stream U-Net'
 
 
-# 1 Abstract
+# 1 Introduction
 
 Urbanization is progressing rapidly around the world. With sub-weekly revisits at global scale, Sentinel-1 Synthetic Aperture Radar (SAR) and Sentinel-2 Multispectral Imager (MSI) data can play an important role for monitoring urban sprawl to support sustainable development. In this paper, we proposed an urban Change Detection (CD) approach featuring a new network architecture for the fusion of SAR and optical data. Specifically, a dual stream concept was introduced to process different data modalities separately, before combining extracted features at a later decision stage. The individual streams are based on U-Net architecture which is one of the most popular fully convolutional networks used for semantic segmentation. The effectiveness of the proposed approach was demonstrated using the Onera Satellite CD (OSCD) dataset. The proposed strategy outperformed other U-Net based approaches in combination with unimodal data and multimodal data with feature level fusion. Furthermore, our approach achieved state-of-the-art performance on the urban CD problem posed by the OSCD dataset.
 
@@ -25,7 +25,7 @@ Sentinel-1 image t1             |  Sentinel-1 image t2 |  OSCD change label
 
 Optical vs. SAR           |  U-Net vs. Dual Stream U-Net
 :--------------------:|:-----------------------:
-![](figures/training_comparison_sensor.PNG) |  ![](figures/training_comparison_fusion.PNG)
+![](figures/training_comparison_sensor.png) |  ![](figures/training_comparison_fusion.png)
 
 
 
