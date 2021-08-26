@@ -1,8 +1,0 @@
-_BASE_: "base.yaml"
-
-THRESH: 0.76
-
-LOGGING: 1
-
-TRAINER:
-  EPOCHS: 1000
