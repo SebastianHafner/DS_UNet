@@ -1,10 +1,9 @@
 _BASE_: "base.yaml"
 
-THRESH: 0.66
-DEBUG: False
+DEBUG: True
 
 MODEL:
-  TYPE: 'dualstreamunet'
+  TYPE: 'unet'
   IN_CHANNELS: 28
 
 DATASET:

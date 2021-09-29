@@ -4,9 +4,18 @@ import cv2
 import tifffile
 import yaml
 
+
+def load_cities(paths, dataset: str) -> list:
+    cities_file = Path(paths['OSCD_ROOT']) / 'images' / f'{dataset}.txt'
+    with open(cities_file, 'r') as f:
+        cities = f.read()[:-1].split(',')
+    return cities
+
+
 CITIES = ['aguasclaras', 'bercy', 'bordeaux', 'nantes', 'paris', 'rennes', 'saclay_e', 'abudhabi', 'cupertino',
           'pisa', 'beihai', 'hongkong', 'beirut', 'mumbai', 'brasilia', 'montpellier', 'norcia', 'rio', 'saclay_w',
           'valencia', 'dubai', 'lasvegas', 'milano', 'chongqing']
+
 
 ORBITS = {
     'aguasclaras': [24],
@@ -40,7 +49,7 @@ def get_band(file: Path) -> str:
     return file.stem.split('_')[-1]
 
 
-def combine_bands(folder: Path) -> tuple:
+def combine_bands(folder: Path) -> np.ndarray:
 
     bands = ['B01', 'B02', 'B03', 'B04', 'B05', 'B06', 'B07', 'B08', 'B8A', 'B09', 'B10', 'B11', 'B12']
     n_bands = len(bands)
@@ -69,17 +78,17 @@ def process_city(paths: dict, city: str):
 
     print(f'Preprocessing {city}')
 
-    old_root = Path(paths['OSCD_DATASET_ROOT'])
-    new_root = Path(paths['OSCD_DATASET_PREPROCESSED'])
+    oscd_root = Path(paths['OSCD_ROOT'])
+    preprocessed_root = Path(paths['PREPROCESSED_ROOT'])
 
-    new_parent = new_root / city
+    new_parent = preprocessed_root / city
     new_parent.mkdir(exist_ok=True)
 
     # image data
     for t in [1, 2]:
 
         # get data
-        from_folder = old_root / 'images' / city / f'imgs_{t}_rect'
+        from_folder = oscd_root / 'images' / city / f'imgs_{t}_rect'
         img = combine_bands(from_folder)
 
         # save data
@@ -89,7 +98,9 @@ def process_city(paths: dict, city: str):
         save_file = to_folder / f'sentinel2_{city}_t{t}.npy'
         np.save(save_file, img)
 
-    from_label_file = label_folder / city / 'cm' / f'{city}-cm.tif'
+    test_cities = load_cities(paths, 'test')
+    dataset = 'test' if city in test_cities else 'train'
+    from_label_file = oscd_root / f'{dataset}_labels' / city / 'cm' / f'{city}-cm.tif'
     label = tifffile.imread(str(from_label_file))
     label = label - 1
 
@@ -98,26 +109,32 @@ def process_city(paths: dict, city: str):
     np.save(to_label_file, label)
 
 
-def add_sentinel1(s1_folder: Path, label_folder: Path, city: str, orbit: int, new_root: Path):
+def add_sentinel1(paths: dict, city: str, orbit: int):
 
-    label_file = label_folder / city / 'cm' / f'{city}-cm.tif'
+    oscd_root = Path(paths['OSCD_ROOT'])
+    preprocessed_root = Path(paths['PREPROCESSED_ROOT'])
+    s1_folder = Path(paths['SENTINEL1_DATA'])
+
+    test_cities = load_cities(paths, 'test')
+    dataset = 'test' if city in test_cities else 'train'
+    label_file = oscd_root / f'{dataset}_labels' / city / 'cm' / f'{city}-cm.tif'
     label = tifffile.imread(str(label_file))
     h, w = label.shape
 
     for t in [1, 2]:
-        s1_file = s1_folder / f'sentinel1_{city}_{orbit}_t{t}.tif'
+
+        s1_file =  s1_folder / f'sentinel1_{city}_{orbit}_t{t}.tif'
         img = tifffile.imread(str(s1_file))
 
         img = cv2.resize(img, (w, h), interpolation=cv2.INTER_CUBIC)
         img = img[:, :, None]
 
         # save data
-        to_folder = new_root / city / 'sentinel1'
+        to_folder = preprocessed_root / city / 'sentinel1'
         to_folder.mkdir(exist_ok=True)
 
         save_file = to_folder / f'sentinel1_{city}_{orbit}_t{t}.npy'
         np.save(save_file, img)
-
 
 
 if __name__ == '__main__':
@@ -130,4 +147,3 @@ if __name__ == '__main__':
         orbits = ORBITS[city]
         for orbit in orbits:
             add_sentinel1(paths, city, orbit)
-

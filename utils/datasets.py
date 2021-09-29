@@ -3,7 +3,7 @@ from torch.utils import data as torch_data
 from torchvision import transforms
 from pathlib import Path
 import numpy as np
-from utils import geofiles, image_arithmetics, augmentations
+from utils import image_arithmetics, augmentations
 
 ORBITS = {
     'aguasclaras': [24],

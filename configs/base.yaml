@@ -27,7 +27,7 @@ DATASET:
 OUTPUT_BASE_DIR: '/storage/shafner/urban_change_detection/run_logs/'
 TRAINER:
   LR: 5e-5
-  EPOCHS: 400
+  EPOCHS: 390
   BATCH_SIZE: 64
   OPTIMIZER: 'adam' # adam or sdg
 AUGMENTATION:

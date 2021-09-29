@@ -5,7 +5,8 @@ from collections import OrderedDict
 import yaml
 from fvcore.common.config import CfgNode as _CfgNode
 
-from .config import CfgNode, new_config, global_config
+
+# from .config import CfgNode, new_config, global_config
 
 
 def default_argument_parser():
@@ -45,25 +46,60 @@ def default_argument_parser():
     return parser
 
 
-# Largely taken from FVCore and Detectron2
+def new_config():
 
+    C = CfgNode()
 
-__all__ = [
-    "CfgNode",
-    "new_config",
-    "global_config"
-]
+    C.CONFIG_DIR = 'config/'
+    C.OUTPUT_BASE_DIR = 'output/'
+
+    C.SEED = 7
+
+    C.MODEL = CfgNode()
+    C.MODEL.TYPE = 'unet'
+    C.MODEL.OUT_CHANNELS = 1
+    C.MODEL.IN_CHANNELS = 2
+    C.MODEL.LOSS_TYPE = 'FrankensteinLoss'
+
+    C.DATALOADER = CfgNode()
+    C.DATALOADER.NUM_WORKER = 8
+    C.DATALOADER.SHUFFLE = True
+
+    C.DATASET = CfgNode()
+    C.DATASET.PATH = ''
+    C.DATASET.MODE = ''
+    C.DATASET.SENTINEL1 = CfgNode()
+    C.DATASET.SENTINEL1.BANDS = ['VV', 'VH']
+    C.DATASET.SENTINEL1.TEMPORAL_MODE = 'bi-temporal'
+    C.DATASET.SENTINEL2 = CfgNode()
+    C.DATASET.SENTINEL2.BANDS = ['B2', 'B3', 'B4', 'B8', 'B11', 'B12']
+    C.DATASET.SENTINEL2.TEMPORAL_MODE = 'bi-temporal'
+    C.DATASET.ALL_CITIES = []
+    C.DATASET.TEST_CITIES = []
+
+    C.OUTPUT_BASE_DIR = ''
+
+    C.TRAINER = CfgNode()
+    C.TRAINER.LR = 1e-4
+    C.TRAINER.BATCH_SIZE = 16
+    C.TRAINER.EPOCHS = 50
+
+    C.AUGMENTATION = CfgNode()
+    C.AUGMENTATION.CROP_TYPE = 'none'
+    C.AUGMENTATION.CROP_SIZE = 32
+    C.RANDOM_FLIP = True
+    C.RANDOM_ROTATE = True
+    return C.clone()
 
 
 def setup(args):
-    cfg = config.new_config()
+    cfg = new_config()
     cfg.merge_from_file(f'configs/{args.config_file}.yaml')
     cfg.merge_from_list(args.opts)
     cfg.NAME = args.config_file
     return cfg
 
 
-# TODO Initialize Cfg from Base Config
 class CfgNode(_CfgNode):
     """
     The same as `fvcore.common.config.CfgNode`, but different in:
@@ -89,159 +125,3 @@ class CfgNode(_CfgNode):
 
         # defaults.py needs to import CfgNode
         self.merge_from_other_cfg(loaded_cfg)
-
-
-def new_config():
-    '''
-    Creates a new config based on the default config file
-    :return:
-    '''
-    from .defaults import C
-    return C.clone()
-
-
-global_config = CfgNode()
-
-
-class HPConfig():
-    '''
-    A hyperparameter config object
-    '''
-
-    def __init__(self):
-        self.data = {}
-        self.argparser = ArgumentParser()
-
-    def create_hp(self, name, value, argparse=False, argparse_args={}):
-        '''
-        Creates a new hyperparameter, optionally sourced from argparse external arguments
-        :param name:
-        :param value:
-        :param argparse:
-        :param argparse_args:
-        :return:
-        '''
-        self.data[name] = value
-        if argparse:
-            datatype = type(value)
-            # Handle boolean type
-            if datatype == bool:
-                self.argparser.add_argument(f'--{name}', action='store_true', *argparse_args)
-            else:
-                self.argparser.add_argument(f'--{name}', type=datatype, *argparse_args)
-
-    def parse_args(self):
-        '''
-        Performs a parse operation from the program arguments
-        :return:
-        '''
-        args = self.argparser.parse_known_args()[0]
-        for key, value in args.__dict__.items():
-            # Arg not present, using default
-            if value is None: continue
-            self.data[key] = value
-
-    def __str__(self):
-        '''
-        Converts the HP into a human readable string format
-        :return:
-        '''
-        table = {'hyperparameter': self.data.keys(),
-                 'values': list(self.data.values()),
-                 }
-        return tabulate(table, headers='keys', tablefmt="fancy_grid", )
-
-    def save_yml(self, file_path):
-        '''
-        Save HP config to a yaml file
-        :param file_path:
-        :return:
-        '''
-        with open(file_path, 'w') as file:
-            yaml.dump(self.data, file, default_flow_style=False)
-
-    def load_yml(self, file_path):
-        '''
-        Load HP Config from a yaml file
-        :param file_path:
-        :return:
-        '''
-        with open(file_path, 'r') as file:
-            yml_hp = yaml.safe_load(file)
-
-        for hp_name, hp_value in yml_hp.items():
-            self.data[hp_name] = hp_value
-
-    def __getattr__(self, name):
-        return self.data[name]
-
-
-def config(name='default') -> HPConfig:
-    '''
-    Retrives a configuration (optionally, creating it) of the run. If no `name` provided, then 'default' is used
-    :param name: Optional name of the
-    :return: HPConfig object
-    '''
-    # Configuration doesn't exist yet
-    # if name not in _config_data.keys():
-    #     _config_data[name] = HPConfig()
-    # return _config_data[name]
-    pass
-
-
-def load_from_yml():
-    '''
-    Load a HPConfig from a YML file
-    :return:
-    '''
-    pass
-
-
-'''
-This is a global default file, each individual project will have their own respective default file
-'''
-from .config import CfgNode as CN
-
-C = CN()
-
-C.CONFIG_DIR = 'config/'
-C.OUTPUT_BASE_DIR = 'output/'
-
-C.SEED = 7
-
-C.MODEL = CN()
-C.MODEL.TYPE = 'unet'
-C.MODEL.OUT_CHANNELS = 1
-C.MODEL.IN_CHANNELS = 2
-C.MODEL.LOSS_TYPE = 'FrankensteinLoss'
-
-C.DATALOADER = CN()
-C.DATALOADER.NUM_WORKER = 8
-C.DATALOADER.SHUFFLE = True
-
-C.DATASET = CN()
-C.DATASET.PATH = ''
-C.DATASET.MODE = ''
-C.DATASET.SENTINEL1 = CN()
-C.DATASET.SENTINEL1.BANDS = ['VV', 'VH']
-C.DATASET.SENTINEL1.TEMPORAL_MODE = 'bi-temporal'
-C.DATASET.SENTINEL2 = CN()
-C.DATASET.SENTINEL2.BANDS = ['B2', 'B3', 'B4', 'B8', 'B11', 'B12']
-C.DATASET.SENTINEL2.TEMPORAL_MODE = 'bi-temporal'
-C.DATASET.ALL_CITIES = []
-C.DATASET.TEST_CITIES = []
-
-C.OUTPUT_BASE_DIR = ''
-
-C.TRAINER = CN()
-C.TRAINER.LR = 1e-4
-C.TRAINER.BATCH_SIZE = 16
-C.TRAINER.EPOCHS = 50
-
-C.AUGMENTATION = CN()
-C.AUGMENTATION.CROP_TYPE = 'none'
-C.AUGMENTATION.CROP_SIZE = 32
-C.RANDOM_FLIP = True
-C.RANDOM_ROTATE = True
-
-

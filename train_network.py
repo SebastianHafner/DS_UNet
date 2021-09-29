@@ -8,8 +8,7 @@ from pathlib import Path
 import torch
 from torch.utils import data as torch_data
 
-
-from utils import networks, loss_functions, datasets, experiment_manager, evaluation_metrics
+from utils import experiment_manager, networks, loss_functions, datasets, evaluation_metrics
 
 # logging
 import wandb
@@ -25,7 +24,7 @@ def train(net, cfg):
 
     optimizer = torch.optim.Adam(net.parameters(), lr=cfg.TRAINER.LR, weight_decay=0.0005)
 
-    criterion = loss_functions.get_loss_function(cfg)
+    criterion = loss_functions.get_loss_function(cfg, device)
 
     # reset the generators
     dataset = datasets.OSCDDataset(cfg, 'train')
@@ -47,7 +46,6 @@ def train(net, cfg):
     save_path = Path(cfg.OUTPUT_BASE_DIR) / cfg.NAME
     save_path.mkdir(exist_ok=True)
 
-    best_test_f1 = 0
     positive_pixels = 0
     pixels = 0
     global_step = 0
@@ -104,17 +102,7 @@ def train(net, cfg):
             test_f1, _ = model_evaluation(net, cfg, device, test_threshold, run_type='test', epoch=epoch,
                                           step=global_step)
 
-            if test_f1 > best_test_f1:
-                print(f'BEST PERFORMANCE SO FAR! <--------------------', flush=True)
-                best_test_f1 = test_f1
-
-                if cfg.SAVE_MODEL and not cfg.DEBUG:
-                    print(f'saving network', flush=True)
-                    # model_file = save_path / 'best_net.pkl'
-                    # torch.save(net.state_dict(), model_file
-                    # )
-            # TODO: handle this in the config file
-            if (epoch + 1) == 390:
+            if (epoch + 1) == epochs:
                 if cfg.SAVE_MODEL and not cfg.DEBUG:
                     print(f'saving network', flush=True)
                     model_file = save_path / f'final_net.pkl'
@@ -178,6 +166,7 @@ def model_evaluation(net, cfg, device, thresholds, run_type, epoch, step):
     print(f'{maxF1.item():.3f}', flush=True)
 
     return maxF1.item(), best_thresh.item()
+
 
 if __name__ == '__main__':
 

@@ -1,7 +1,8 @@
 import torch
+from torch.nn import functional as F
 
 
-def get_loss_function(cfg):
+def get_loss_function(cfg, device):
     if cfg.MODEL.LOSS_TYPE == 'BCEWithLogitsLoss':
         criterion = torch.nn.BCEWithLogitsLoss()
     elif cfg.MODEL.LOSS_TYPE == 'WeightedBCEWithLogitsLoss':
@@ -22,9 +23,8 @@ def get_loss_function(cfg):
             pred, gts)
     elif cfg.MODEL.LOSS_TYPE == 'WeightedFrankensteinLoss':
         positive_weight = torch.tensor([cfg.MODEL.POSITIVE_WEIGHT]).float().to(device)
-        criterion = lambda pred, gts: F.binary_cross_entropy_with_logits(pred, gts,
-                                                                         pos_weight=positive_weight) + 5 * jaccard_like_balanced_loss(
-            pred, gts)
+        criterion = lambda pred, gts: F.binary_cross_entropy_with_logits(pred, gts, pos_weight=positive_weight) + 5 *\
+                                      jaccard_like_balanced_loss(pred, gts)
     else:
         criterion = soft_dice_loss
     return criterion
