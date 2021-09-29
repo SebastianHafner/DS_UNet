@@ -54,15 +54,15 @@ Sentinel-1 image t1             |  Sentinel-1 image t2 |  OSCD change label
 
 First we need to set up the paths to our data in the paths.yaml file.
 
-1. Set the OSCD_DATASET_ROOT variable to the root of the OSCD dataset:
-     * OSCD_DATASET_ROOT
+1. Set the OSCD_ROOT variable to the root directory of the OSCD dataset:
+     * OSCD_ROOT
        * images (Onera Satellite Change Detection dataset - Images)
        * train_labels (Onera Satellite Change Detection dataset - Train Labels)
        * test_labels (Onera Satellite Change Detection dataset - Test Labels)
 
 2. Set the SENTINEL1_DATA variable to the directory containing our Sentinel-1 SAR data.
 
-3. Set the PREPROCESSED_DATASET variable to an empty directory. All data of the preprocessed dataset will be saved in this directory and accessed for training and inference.
+3. Set the PREPROCESSED_ROOT variable to an empty directory. All data of the preprocessed dataset will be saved in this directory and accessed for training and inference.
 
 Then we can run preprocess.py.
 
@@ -70,9 +70,9 @@ Then we can run preprocess.py.
 
 Run train_network.py with any of the configs (e.g. python train_network.py -c fusion_1)
 
-## 5 Make predictions on the OSCD dataset's testing images
+## 5 Model evaluation
 
-Run inference.py.
+The file evaluation.py contains a collection of functions to quantitatively and qualitatively assess network performance.
 
 # Credits
 
