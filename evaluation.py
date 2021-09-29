@@ -7,25 +7,15 @@ from pathlib import Path
 from utils import networks, datasets, experiment_manager, evaluation_metrics
 
 
-# loading cfg for inference
-def load_cfg(cfg_file: Path):
-    cfg = experiment_manager.new_config()
-    cfg.merge_from_file(str(cfg_file))
-    return cfg
-
-
-
-
-
-def visual_evaluation(root_dir: Path, cfg_file: Path, net_file: Path, dataset: str = 'test', n: int = 10,
-                     save_dir: Path = None, label_pred_only: bool = False):
+def visual_evaluation(root_dir: Path, cfg_file: Path, net_file: Path, dataset: str = 'test', save_dir: Path = None,
+                      label_pred_only: bool = False):
 
     mode = 'cuda' if torch.cuda.is_available() else 'cpu'
     device = torch.device(mode)
 
     # loading cfg and network
-    cfg = load_cfg(cfg_file)
-    net = load_net(cfg, net_file)
+    cfg = experiment_manager.load_cfg(cfg_file)
+    net = networks.load_network(cfg, net_file)
 
     # bands for visualizaiton
     s1_bands, s2_bands = cfg.DATASET.SENTINEL1_BANDS, cfg.DATASET.SENTINEL2_BANDS
@@ -87,58 +77,14 @@ def visual_evaluation(root_dir: Path, cfg_file: Path, net_file: Path, dataset: s
             plt.close()
 
 
-def visualize_images(root_dir: Path, save_dir: Path = None):
-
-    mode = 'cuda' if torch.cuda.is_available() else 'cpu'
-    device = torch.device(mode)
-
-    cfg_file = Path.cwd() / 'configs' / 'optical_visualization.yaml'
-    cfg = load_cfg(cfg_file)
-
-    dataset = datasets.OSCDDataset(cfg, 'test', no_augmentation=True)
-    dataloader_kwargs = {
-        'batch_size': 1,
-        'num_workers': 0,
-        'shuffle': False,
-        'pin_memory': True,
-    }
-    dataloader = torch_data.DataLoader(dataset, **dataloader_kwargs)
-
-    with torch.no_grad():
-        for step, batch in enumerate(dataloader):
-            city = batch['city'][0]
-            print(city)
-            t1_img = batch['t1_img'].to(device)
-            t2_img = batch['t2_img'].to(device)
-
-            rgb_indices = [3, 2, 1]
-            for i, img in enumerate([t1_img, t2_img]):
-                fig, ax = plt.subplots()
-                img = img.cpu().detach().numpy()[0,]
-                img = img.transpose((1, 2, 0))
-                rgb = img[:, :, rgb_indices] / 0.3
-                rgb = np.minimum(rgb, 1)
-                ax.imshow(rgb)
-                ax.set_axis_off()
-
-                if save_dir is None:
-                    save_dir = root_dir / 'evaluation' / 'images'
-                if not save_dir.exists():
-                    save_dir.mkdir()
-                file = save_dir / f'{city}_img{i + 1}.png'
-
-                plt.savefig(file, dpi=300, bbox_inches='tight')
-                plt.close()
-
-
 def visualize_missclassifications(root_dir: Path, cfg_file: Path, net_file: Path, save_dir: Path = None):
 
     mode = 'cuda' if torch.cuda.is_available() else 'cpu'
     device = torch.device(mode)
 
     # loading cfg and network
-    cfg = load_cfg(cfg_file)
-    net = load_net(cfg, net_file)
+    cfg = experiment_manager.load_cfg(cfg_file)
+    net = networks.load_network(cfg, net_file)
 
     dataset = datasets.OSCDDataset(cfg, 'test', no_augmentation=True)
     dataloader_kwargs = {
@@ -197,8 +143,8 @@ def numeric_evaluation(cfg_file: Path, net_file: Path):
     device = torch.device(mode)
 
     # loading cfg and network
-    cfg = load_cfg(cfg_file)
-    net = load_net(cfg, net_file)
+    cfg = experiment_manager.load_cfg(cfg_file)
+    net = networks.load_network(cfg, net_file)
     dataset = datasets.OSCDDataset(cfg, 'test', no_augmentation=True)
 
     dataloader_kwargs = {
@@ -216,10 +162,10 @@ def numeric_evaluation(cfg_file: Path, net_file: Path):
         return pred
 
     def evaluate(true, pred):
-        f1_score = eval.f1_score(true.flatten(), pred.flatten(), dim=0).item()
-        true_pos = eval.true_pos(true.flatten(), pred.flatten(), dim=0).item()
-        false_pos = eval.false_pos(true.flatten(), pred.flatten(), dim=0).item()
-        false_neg = eval.false_neg(true.flatten(), pred.flatten(), dim=0).item()
+        f1_score = evaluation_metrics.f1_score(true.flatten(), pred.flatten(), dim=0).item()
+        true_pos = evaluation_metrics.true_pos(true.flatten(), pred.flatten(), dim=0).item()
+        false_pos = evaluation_metrics.false_pos(true.flatten(), pred.flatten(), dim=0).item()
+        false_neg = evaluation_metrics.false_neg(true.flatten(), pred.flatten(), dim=0).item()
         return f1_score, true_pos, false_pos, false_neg
 
     cities, f1_scores, true_positives, false_positives, false_negatives = [], [], [], [], []
@@ -311,18 +257,14 @@ def subset_pred_results(pred_results, cities):
     return pred_results
 
 
-def orbit_comparison(cfg_file, net_file):
-    pass
-
-
 def standard_deviation(cfg_file: Path, net_file: Path):
 
     mode = 'cuda' if torch.cuda.is_available() else 'cpu'
     device = torch.device(mode)
 
     # loading cfg and network
-    cfg = load_cfg(cfg_file)
-    net = load_net(cfg, net_file)
+    cfg = experiment_manager.load_cfg(cfg_file)
+    net = networks.load_network(cfg, net_file)
     net.to(device).eval()
 
     dataset = datasets.OSCDDataset(cfg, 'test', no_augmentation=True)
@@ -353,6 +295,7 @@ def standard_deviation(cfg_file: Path, net_file: Path):
 
 if __name__ == '__main__':
 
+    # TODO: test this and move save paths to paths file
     CFG_DIR = Path.cwd() / 'configs'
     NET_DIR = Path('/storage/shafner/urban_change_detection/run_logs/')
     STORAGE_DIR = Path('/storage/shafner/urban_change_detection')

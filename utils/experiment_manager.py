@@ -4,6 +4,7 @@ from tabulate import tabulate
 from collections import OrderedDict
 import yaml
 from fvcore.common.config import CfgNode as _CfgNode
+from pathlib import Path
 
 
 # from .config import CfgNode, new_config, global_config
@@ -97,6 +98,13 @@ def setup(args):
     cfg.merge_from_file(f'configs/{args.config_file}.yaml')
     cfg.merge_from_list(args.opts)
     cfg.NAME = args.config_file
+    return cfg
+
+
+# loading cfg for inference
+def load_cfg(cfg_file: Path):
+    cfg = new_config()
+    cfg.merge_from_file(str(cfg_file))
     return cfg
 
 
