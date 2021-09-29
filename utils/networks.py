@@ -2,7 +2,32 @@ from collections import OrderedDict
 import torch.nn.functional as F
 import torch
 import torch.nn as nn
-from torch.nn.modules.padding import ReplicationPad2d
+
+
+def create_network(cfg):
+    architecture = cfg.MODEL.TYPE
+    if architecture == 'unet':
+        return UNet(cfg)
+    elif architecture == 'dualstreamunet':
+        return DualStreamUNet(cfg)
+    else:
+        return UNet(cfg)
+
+
+# loading network for inference
+def load_network(cfg, net_file):
+    net = create_network(cfg)
+
+    state_dict = torch.load(str(net_file), map_location=lambda storage, loc: storage)
+    net.load_state_dict(state_dict)
+
+    mode = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = torch.device(mode)
+
+    net.to(device)
+    net.eval()
+
+    return net
 
 
 class DualStreamUNet(nn.Module):
@@ -31,7 +56,6 @@ class DualStreamUNet(nn.Module):
         self.out_conv = OutConv(out_dim, out)
 
     def forward(self, t1_img, t2_img):
-
         s1_t1, s2_t1 = torch.split(t1_img, [self.n_s1_bands, self.n_s2_bands], dim=1)
         s1_t2, s2_t2 = torch.split(t2_img, [self.n_s1_bands, self.n_s2_bands], dim=1)
 
@@ -65,19 +89,19 @@ class UNet(nn.Module):
         down_topo = topology
         down_dict = OrderedDict()
         n_layers = len(down_topo)
-        up_topo = [first_chan] # topography upwards
+        up_topo = [first_chan]  # topography upwards
         up_dict = OrderedDict()
 
         # Downward layers
         for idx in range(n_layers):
-            is_not_last_layer = idx != n_layers-1
+            is_not_last_layer = idx != n_layers - 1
             in_dim = down_topo[idx]
-            out_dim = down_topo[idx+1] if is_not_last_layer else down_topo[idx]  # last layer
+            out_dim = down_topo[idx + 1] if is_not_last_layer else down_topo[idx]  # last layer
 
             layer = Down(in_dim, out_dim, DoubleConv)
 
-            print(f'down{idx+1}: in {in_dim}, out {out_dim}')
-            down_dict[f'down{idx+1}'] = layer
+            print(f'down{idx + 1}: in {in_dim}, out {out_dim}')
+            down_dict[f'down{idx + 1}'] = layer
             up_topo.append(out_dim)
         self.down_seq = nn.ModuleDict(down_dict)
 
@@ -91,8 +115,8 @@ class UNet(nn.Module):
 
             layer = Up(in_dim, out_dim, DoubleConv)
 
-            print(f'up{idx+1}: in {in_dim}, out {out_dim}')
-            up_dict[f'up{idx+1}'] = layer
+            print(f'up{idx + 1}: in {in_dim}, out {out_dim}')
+            up_dict[f'up{idx + 1}'] = layer
 
         self.up_seq = nn.ModuleDict(up_dict)
 

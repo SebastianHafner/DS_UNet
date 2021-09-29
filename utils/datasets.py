@@ -3,8 +3,7 @@ from torch.utils import data as torch_data
 from torchvision import transforms
 from pathlib import Path
 import numpy as np
-import augmentations as aug
-from utils import *
+from utils import geofiles, image_arithmetics, augmentations
 
 ORBITS = {
     'aguasclaras': [24],
@@ -53,9 +52,9 @@ class OSCDDataset(torch.utils.data.Dataset):
         self.length = len(self.cities)
 
         if no_augmentation:
-            self.transform = transforms.Compose([aug.Numpy2Torch()])
+            self.transform = transforms.Compose([augmentations.Numpy2Torch()])
         else:
-            self.transform = aug.compose_transformations(cfg)
+            self.transform = augmentations.compose_transformations(cfg)
 
         self.mode = cfg.DATASET.MODE
 
@@ -198,16 +197,16 @@ class OSCDDifferenceImages(OSCDDataset):
             nir = self.band_index('B08')
             swir = self.band_index('B11')
 
-            t1_ndvi = normalize(normalized_difference(t1_img, red, nir), -1, 1)
-            t1_ndbi = normalize(normalized_difference(t1_img, swir, nir), -1, 1)
+            t1_ndvi = image_arithmetics.normalize(image_arithmetics.normalized_difference(t1_img, red, nir), -1, 1)
+            t1_ndbi = image_arithmetics.normalize(image_arithmetics.normalized_difference(t1_img, swir, nir), -1, 1)
             t1_indices = np.stack((t1_ndvi, t1_ndbi), axis=-1)
 
-            t2_ndvi = normalize(normalized_difference(t2_img, red, nir), -1, 1)
-            t2_ndbi = normalize(normalized_difference(t2_img, swir, nir), -1, 1)
+            t2_ndvi = image_arithmetics.normalize(image_arithmetics.normalized_difference(t2_img, red, nir), -1, 1)
+            t2_ndbi = image_arithmetics.normalize(image_arithmetics.normalized_difference(t2_img, swir, nir), -1, 1)
             t2_indices = np.stack((t2_ndvi, t2_ndbi), axis=-1)
             t1_img, t2_img = t1_indices, t2_indices
 
-        cva = change_vector_analysis(t1_img, t2_img)
+        cva = image_arithmetics.change_vector_analysis(t1_img, t2_img)
 
         return cva.astype(np.float32)
 
@@ -219,6 +218,6 @@ class OSCDDifferenceImages(OSCDDataset):
         t1_vv = t1_img[:, :, vv]
         t2_vv = t2_img[:, :, vv]
 
-        lr = log_ratio(t1_vv, t2_vv)
+        lr = image_arithmetics.log_ratio(t1_vv, t2_vv)
         # TODO: add normalization
         return lr.astype(np.float32)

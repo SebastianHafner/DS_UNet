@@ -1,7 +1,36 @@
 import torch
 
 
-def soft_dice_loss(input:torch.Tensor, target:torch.Tensor):
+def get_loss_function(cfg):
+    if cfg.MODEL.LOSS_TYPE == 'BCEWithLogitsLoss':
+        criterion = torch.nn.BCEWithLogitsLoss()
+    elif cfg.MODEL.LOSS_TYPE == 'WeightedBCEWithLogitsLoss':
+        positive_weight = torch.tensor([cfg.MODEL.POSITIVE_WEIGHT]).float().to(device)
+        criterion = torch.nn.BCEWithLogitsLoss(pos_weight=positive_weight)
+    elif cfg.MODEL.LOSS_TYPE == 'SoftDiceLoss':
+        criterion = soft_dice_loss
+    elif cfg.MODEL.LOSS_TYPE == 'SoftDiceBalancedLoss':
+        criterion = soft_dice_loss_balanced
+    elif cfg.MODEL.LOSS_TYPE == 'JaccardLikeLoss':
+        criterion = jaccard_like_loss
+    elif cfg.MODEL.LOSS_TYPE == 'ComboLoss':
+        criterion = lambda pred, gts: F.binary_cross_entropy_with_logits(pred, gts) + soft_dice_loss(pred, gts)
+    elif cfg.MODEL.LOSS_TYPE == 'WeightedComboLoss':
+        criterion = lambda pred, gts: 2 * F.binary_cross_entropy_with_logits(pred, gts) + soft_dice_loss(pred, gts)
+    elif cfg.MODEL.LOSS_TYPE == 'FrankensteinLoss':
+        criterion = lambda pred, gts: F.binary_cross_entropy_with_logits(pred, gts) + jaccard_like_balanced_loss(
+            pred, gts)
+    elif cfg.MODEL.LOSS_TYPE == 'WeightedFrankensteinLoss':
+        positive_weight = torch.tensor([cfg.MODEL.POSITIVE_WEIGHT]).float().to(device)
+        criterion = lambda pred, gts: F.binary_cross_entropy_with_logits(pred, gts,
+                                                                         pos_weight=positive_weight) + 5 * jaccard_like_balanced_loss(
+            pred, gts)
+    else:
+        criterion = soft_dice_loss
+    return criterion
+
+
+def soft_dice_loss(input: torch.Tensor, target: torch.Tensor):
     input_sigmoid = torch.sigmoid(input)
     eps = 1e-6
 
@@ -9,11 +38,10 @@ def soft_dice_loss(input:torch.Tensor, target:torch.Tensor):
     tflat = target.flatten()
     intersection = (iflat * tflat).sum()
 
-    return 1 - ((2. * intersection) /
-                (iflat.sum() + tflat.sum() + eps))
+    return 1 - ((2. * intersection) / (iflat.sum() + tflat.sum() + eps))
 
 
-def soft_dice_loss_multi_class(input:torch.Tensor, y:torch.Tensor):
+def soft_dice_loss_multi_class(input: torch.Tensor, y: torch.Tensor):
     p = torch.softmax(input, dim=1)
     eps = 1e-6
 
@@ -26,7 +54,7 @@ def soft_dice_loss_multi_class(input:torch.Tensor, y:torch.Tensor):
     return loss
 
 
-def soft_dice_loss_multi_class_debug(input:torch.Tensor, y:torch.Tensor):
+def soft_dice_loss_multi_class_debug(input: torch.Tensor, y: torch.Tensor):
     p = torch.softmax(input, dim=1)
     eps = 1e-6
 
@@ -40,7 +68,7 @@ def soft_dice_loss_multi_class_debug(input:torch.Tensor, y:torch.Tensor):
     return loss, loss_components
 
 
-def generalized_soft_dice_loss_multi_class(input:torch.Tensor, y:torch.Tensor):
+def generalized_soft_dice_loss_multi_class(input: torch.Tensor, y: torch.Tensor):
     p = torch.softmax(input, dim=1)
     eps = 1e-12
 
@@ -56,7 +84,7 @@ def generalized_soft_dice_loss_multi_class(input:torch.Tensor, y:torch.Tensor):
     return loss
 
 
-def jaccard_like_loss_multi_class(input:torch.Tensor, y:torch.Tensor):
+def jaccard_like_loss_multi_class(input: torch.Tensor, y: torch.Tensor):
     p = torch.softmax(input, dim=1)
     eps = 1e-6
 
@@ -71,7 +99,7 @@ def jaccard_like_loss_multi_class(input:torch.Tensor, y:torch.Tensor):
     return loss
 
 
-def jaccard_like_loss(input:torch.Tensor, target:torch.Tensor):
+def jaccard_like_loss(input: torch.Tensor, target: torch.Tensor):
     input_sigmoid = torch.sigmoid(input)
     eps = 1e-6
 
@@ -83,7 +111,7 @@ def jaccard_like_loss(input:torch.Tensor, target:torch.Tensor):
     return 1 - ((2. * intersection) / denom)
 
 
-def jaccard_like_balanced_loss(input:torch.Tensor, target:torch.Tensor):
+def jaccard_like_balanced_loss(input: torch.Tensor, target: torch.Tensor):
     input_sigmoid = torch.sigmoid(input)
     eps = 1e-6
 
@@ -102,7 +130,7 @@ def jaccard_like_balanced_loss(input:torch.Tensor, target:torch.Tensor):
     return 1 - piccard - n_piccard
 
 
-def soft_dice_loss_balanced(input:torch.Tensor, target:torch.Tensor):
+def soft_dice_loss_balanced(input: torch.Tensor, target: torch.Tensor):
     input_sigmoid = torch.sigmoid(input)
     eps = 1e-6
 

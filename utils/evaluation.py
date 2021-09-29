@@ -1,39 +1,20 @@
 import torch
-from torchvision import transforms
-import torchvision.transforms.functional as TF
 from torch.utils import data as torch_data
 
 import matplotlib.pyplot as plt
 import numpy as np
-from networks.network_loader import load_network
-import datasets
-from experiment_manager.config import new_config
 from pathlib import Path
-import evaluation_metrics as eval
+from utils import networks, datasets, experiment_manager, evaluation_metrics
 
 
 # loading cfg for inference
 def load_cfg(cfg_file: Path):
-    cfg = new_config()
+    cfg = experiment_manager.new_config()
     cfg.merge_from_file(str(cfg_file))
     return cfg
 
 
-# loading network for inference
-def load_net(cfg, net_file):
 
-    net = load_network(cfg)
-
-    state_dict = torch.load(str(net_file), map_location=lambda storage, loc: storage)
-    net.load_state_dict(state_dict)
-
-    mode = 'cuda' if torch.cuda.is_available() else 'cpu'
-    device = torch.device(mode)
-
-    net.to(device)
-    net.eval()
-
-    return net
 
 
 def visual_evaluation(root_dir: Path, cfg_file: Path, net_file: Path, dataset: str = 'test', n: int = 10,

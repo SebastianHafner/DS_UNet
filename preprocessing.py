@@ -1,8 +1,39 @@
 import numpy as np
 from pathlib import Path
-import utils
 import cv2
 import tifffile
+import yaml
+
+CITIES = ['aguasclaras', 'bercy', 'bordeaux', 'nantes', 'paris', 'rennes', 'saclay_e', 'abudhabi', 'cupertino',
+          'pisa', 'beihai', 'hongkong', 'beirut', 'mumbai', 'brasilia', 'montpellier', 'norcia', 'rio', 'saclay_w',
+          'valencia', 'dubai', 'lasvegas', 'milano', 'chongqing']
+
+ORBITS = {
+    'aguasclaras': [24],
+    'bercy': [59, 8, 110],
+    'bordeaux': [30, 8, 81],
+    'nantes': [30, 81],
+    'paris': [59, 8, 110],
+    'rennes': [30, 81],
+    'saclay_e': [59, 8],
+    'abudhabi': [130],
+    'cupertino': [35, 115, 42],
+    'pisa': [15, 168],
+    'beihai': [157],
+    'hongkong': [11, 113],
+    'beirut': [14, 87],
+    'mumbai': [34],
+    'brasilia': [24],
+    'montpellier': [59, 37],
+    'norcia': [117, 44, 22, 95],
+    'rio': [155],
+    'saclay_w': [59, 8, 110],
+    'valencia': [30, 103, 8, 110],
+    'dubai': [130, 166],
+    'lasvegas': [166, 173],
+    'milano': [66, 168],
+    'chongqing': [55, 164]
+}
 
 
 def get_band(file: Path) -> str:
@@ -34,9 +65,12 @@ def combine_bands(folder: Path) -> tuple:
     return img
 
 
-def process_city(img_folder: Path, label_folder: Path, city: str, new_root: Path) -> None:
+def process_city(paths: dict, city: str):
 
-    print(city)
+    print(f'Preprocessing {city}')
+
+    old_root = Path(paths['OSCD_DATASET_ROOT'])
+    new_root = Path(paths['OSCD_DATASET_PREPROCESSED'])
 
     new_parent = new_root / city
     new_parent.mkdir(exist_ok=True)
@@ -45,7 +79,7 @@ def process_city(img_folder: Path, label_folder: Path, city: str, new_root: Path
     for t in [1, 2]:
 
         # get data
-        from_folder = img_folder / city / f'imgs_{t}_rect'
+        from_folder = old_root / 'images' / city / f'imgs_{t}_rect'
         img = combine_bands(from_folder)
 
         # save data
@@ -87,45 +121,13 @@ def add_sentinel1(s1_folder: Path, label_folder: Path, city: str, orbit: int, ne
 
 
 if __name__ == '__main__':
-    # assume unchanged OSCD dataset
-    IMG_FOLDER = Path('/storage/shafner/urban_change_detection/OSCD_dataset/images/')
-    LABEL_FOLDER = Path('/storage/shafner/urban_change_detection/OSCD_dataset/labels/')
-    NEW_ROOT = Path('/storage/shafner/urban_change_detection/OSCD_dataset/preprocessed')
-    S1_FOLDER = Path('/storage/shafner/urban_change_detection/OSCD_dataset/sentinel1')
 
-    CITIES = ['aguasclaras', 'bercy', 'bordeaux', 'nantes', 'paris', 'rennes', 'saclay_e', 'abudhabi', 'cupertino',
-              'pisa', 'beihai', 'hongkong', 'beirut', 'mumbai', 'brasilia', 'montpellier', 'norcia', 'rio', 'saclay_w',
-              'valencia', 'dubai', 'lasvegas', 'milano', 'chongqing']
-
-    ORBITS = {
-        'aguasclaras': [24],
-        'bercy': [59, 8, 110],
-        'bordeaux': [30, 8, 81],
-        'nantes': [30, 81],
-        'paris': [59, 8, 110],
-        'rennes': [30, 81],
-        'saclay_e': [59, 8],
-        'abudhabi': [130],
-        'cupertino': [35, 115, 42],
-        'pisa': [15, 168],
-        'beihai': [157],
-        'hongkong': [11, 113],
-        'beirut': [14, 87],
-        'mumbai': [34],
-        'brasilia': [24],
-        'montpellier': [59, 37],
-        'norcia': [117, 44, 22, 95],
-        'rio': [155],
-        'saclay_w': [59, 8, 110],
-        'valencia': [30, 103, 8, 110],
-        'dubai': [130, 166],
-        'lasvegas': [166, 173],
-        'milano': [66, 168],
-        'chongqing': [55, 164]
-    }
+    with open(str(Path.cwd() / 'paths.yaml')) as file:
+        paths = yaml.load(file, Loader=yaml.FullLoader)
 
     for city in CITIES:
-        # process_city(IMG_FOLDER, LABEL_FOLDER, city, NEW_ROOT)
+        process_city(paths, city)
         orbits = ORBITS[city]
         for orbit in orbits:
-            add_sentinel1(S1_FOLDER, LABEL_FOLDER, city, orbit, NEW_ROOT)
+            add_sentinel1(paths, city, orbit)
+

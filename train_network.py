@@ -1,5 +1,4 @@
 # general modules
-import json
 import sys
 import os
 import numpy as np
@@ -8,32 +7,12 @@ from pathlib import Path
 # learning framework
 import torch
 from torch.utils import data as torch_data
-from torch.nn import functional as F
-from torchvision import transforms
 
-# config for experiments
-from experiment_manager import args
-from experiment_manager.config import config
 
-# custom stuff
-import evaluation_metrics as eval
-import loss_functions as lf
-import datasets
-import utils
-
-# networks from papers and ours
-from networks.network_loader import load_network
+from utils import networks, loss_functions, datasets, experiment_manager, evaluation_metrics
 
 # logging
 import wandb
-
-
-def setup(args):
-    cfg = config.new_config()
-    cfg.merge_from_file(f'configs/{args.config_file}.yaml')
-    cfg.merge_from_list(args.opts)
-    cfg.NAME = args.config_file
-    return cfg
 
 
 def train(net, cfg):
@@ -44,34 +23,9 @@ def train(net, cfg):
 
     net.to(device)
 
-    if cfg.TRAINER.OPTIMIZER == 'adam':
-        optimizer = torch.optim.Adam(net.parameters(), lr=cfg.TRAINER.LR, weight_decay=0.0005)
-    else:
-        optimizer = torch.optim.SGD(net.parameters(), lr=cfg.TRAINER.LR, momentum=0.9)
+    optimizer = torch.optim.Adam(net.parameters(), lr=cfg.TRAINER.LR, weight_decay=0.0005)
 
-    # loss functions
-    if cfg.MODEL.LOSS_TYPE == 'BCEWithLogitsLoss':
-        criterion = torch.nn.BCEWithLogitsLoss()
-    elif cfg.MODEL.LOSS_TYPE == 'WeightedBCEWithLogitsLoss':
-        positive_weight = torch.tensor([cfg.MODEL.POSITIVE_WEIGHT]).float().to(device)
-        criterion = torch.nn.BCEWithLogitsLoss(pos_weight=positive_weight)
-    elif cfg.MODEL.LOSS_TYPE == 'SoftDiceLoss':
-        criterion = lf.soft_dice_loss
-    elif cfg.MODEL.LOSS_TYPE == 'SoftDiceBalancedLoss':
-        criterion = lf.soft_dice_loss_balanced
-    elif cfg.MODEL.LOSS_TYPE == 'JaccardLikeLoss':
-        criterion = lf.jaccard_like_loss
-    elif cfg.MODEL.LOSS_TYPE == 'ComboLoss':
-        criterion = lambda pred, gts: F.binary_cross_entropy_with_logits(pred, gts) + lf.soft_dice_loss(pred, gts)
-    elif cfg.MODEL.LOSS_TYPE == 'WeightedComboLoss':
-        criterion = lambda pred, gts: 2 * F.binary_cross_entropy_with_logits(pred, gts) + lf.soft_dice_loss(pred, gts)
-    elif cfg.MODEL.LOSS_TYPE == 'FrankensteinLoss':
-        criterion = lambda pred, gts: F.binary_cross_entropy_with_logits(pred, gts) + lf.jaccard_like_balanced_loss(pred, gts)
-    elif cfg.MODEL.LOSS_TYPE == 'WeightedFrankensteinLoss':
-        positive_weight = torch.tensor([cfg.MODEL.POSITIVE_WEIGHT]).float().to(device)
-        criterion = lambda pred, gts: F.binary_cross_entropy_with_logits(pred, gts, pos_weight=positive_weight) + 5 * lf.jaccard_like_balanced_loss(pred, gts)
-    else:
-        criterion = lf.soft_dice_loss
+    criterion = loss_functions.get_loss_function(cfg)
 
     # reset the generators
     dataset = datasets.OSCDDataset(cfg, 'train')
@@ -157,8 +111,9 @@ def train(net, cfg):
                 if cfg.SAVE_MODEL and not cfg.DEBUG:
                     print(f'saving network', flush=True)
                     # model_file = save_path / 'best_net.pkl'
-                    # torch.save(net.state_dict(), model_file)
-
+                    # torch.save(net.state_dict(), model_file
+                    # )
+            # TODO: handle this in the config file
             if (epoch + 1) == 390:
                 if cfg.SAVE_MODEL and not cfg.DEBUG:
                     print(f'saving network', flush=True)
@@ -167,12 +122,11 @@ def train(net, cfg):
 
 
 def model_evaluation(net, cfg, device, thresholds, run_type, epoch, step):
-
     thresholds = thresholds.to(device)
     y_true_set = []
     y_pred_set = []
 
-    measurer = eval.MultiThresholdMetric(thresholds)
+    measurer = evaluation_metrics.MultiThresholdMetric(thresholds)
 
     dataset = datasets.OSCDDataset(cfg, run_type, no_augmentation=True)
     dataloader_kwargs = {
@@ -225,21 +179,21 @@ def model_evaluation(net, cfg, device, thresholds, run_type, epoch, step):
 
     return maxF1.item(), best_thresh.item()
 
-
 if __name__ == '__main__':
 
     # setting up config based on parsed argument
-    parser = args.default_argument_parser()
+    parser = experiment_manager.default_argument_parser()
     args = parser.parse_known_args()[0]
-    cfg = setup(args)
+    cfg = experiment_manager.setup(args)
 
+    # deterministic training
     torch.manual_seed(cfg.SEED)
     np.random.seed(cfg.SEED)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
     # loading network
-    net = load_network(cfg)
+    net = networks.create_network(cfg)
 
     # tracking land with w&b
     if not cfg.DEBUG:
@@ -249,6 +203,7 @@ if __name__ == '__main__':
             tags=['run', 'change', 'detection', ],
         )
 
+    # here we go
     try:
         train(net, cfg)
     except KeyboardInterrupt:

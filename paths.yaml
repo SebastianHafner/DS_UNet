@@ -1,0 +1,5 @@
+
+OSCD_DATASET_ROOT: '/storage/shafner/oscd_dataset'
+SENTINEL1_DATA: '/home/shafner/DS_UNet/data'
+PREPROCESSED_DATASET: '/storage/shafner/oscd_dataset_preprocessed'
+

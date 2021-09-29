@@ -1,7 +1,6 @@
 import torchvision.transforms.functional as TF
 from torchvision import transforms
 import numpy as np
-import torch
 
 
 def compose_transformations(cfg):
