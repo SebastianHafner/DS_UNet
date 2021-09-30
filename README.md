@@ -52,17 +52,21 @@ Sentinel-1 image t1             |  Sentinel-1 image t2 |  OSCD change label
 
 ## 3 Set up paths and preprocess dataset
 
-First we need to set up the paths to our data in the paths.yaml file.
+First we need to set up the paths to our data in the paths.py file.
 
-1. Set the OSCD_ROOT variable to the root directory of the OSCD dataset:
+1. Set the HOME_ROOT to this the direcotry of this repo
+
+2. Set the OSCD_ROOT variable to the root directory of the OSCD dataset:
      * OSCD_ROOT
        * images (Onera Satellite Change Detection dataset - Images)
        * train_labels (Onera Satellite Change Detection dataset - Train Labels)
        * test_labels (Onera Satellite Change Detection dataset - Test Labels)
 
-2. Set the SENTINEL1_DATA variable to the directory containing our Sentinel-1 SAR data.
+3. Set the SENTINEL1_DATA variable to the directory containing our Sentinel-1 SAR data.
 
-3. Set the PREPROCESSED_ROOT variable to an empty directory. All data of the preprocessed dataset will be saved in this directory and accessed for training and inference.
+4. Set the PREPROCESSED_ROOT variable to an empty directory. All data of the preprocessed dataset will be saved in this directory and accessed for training and inference.
+
+5. Set the OUTPUT_ROOT to save networks and all evaluation plots (this can be the same directory as PREPROCESSED_ROOT)
 
 Then we can run preprocess.py.
 
