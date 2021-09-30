@@ -8,7 +8,7 @@ from pathlib import Path
 import torch
 from torch.utils import data as torch_data
 
-from utils import experiment_manager, networks, loss_functions, datasets, evaluation_metrics
+from utils import experiment_manager, networks, loss_functions, datasets, evaluation_metrics, paths
 
 # logging
 import wandb
@@ -43,8 +43,10 @@ def train(net, cfg):
 
     dataloader = torch_data.DataLoader(dataset, **dataloader_kwargs)
 
-    save_path = Path(cfg.OUTPUT_BASE_DIR) / cfg.NAME
-    save_path.mkdir(exist_ok=True)
+    # setting up save dir
+    dirs = paths.load_paths()
+    net_dir = Path(dirs.OUTPUT_ROOT) / 'run_logs'
+    net_dir.mkdir(exist_ok=True)
 
     positive_pixels = 0
     pixels = 0
@@ -105,8 +107,9 @@ def train(net, cfg):
             if (epoch + 1) == epochs:
                 if cfg.SAVE_MODEL and not cfg.DEBUG:
                     print(f'saving network', flush=True)
-                    model_file = save_path / f'final_net.pkl'
-                    torch.save(net.state_dict(), model_file)
+                    net_file = net_dir / cfg.NAME / f'final_net.pkl'
+                    net_file.parent.mkdir(exist_ok=True)
+                    torch.save(net.state_dict(), net_file)
 
 
 def model_evaluation(net, cfg, device, thresholds, run_type, epoch, step):

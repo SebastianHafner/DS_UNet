@@ -3,10 +3,12 @@ from pathlib import Path
 import cv2
 import tifffile
 import yaml
+from utils import paths
 
 
-def load_cities(paths, dataset: str) -> list:
-    cities_file = Path(paths['OSCD_ROOT']) / 'images' / f'{dataset}.txt'
+def load_cities(dataset: str) -> list:
+    dirs = paths.load_paths()
+    cities_file = Path(dirs.OSCD_ROOT) / 'images' / f'{dataset}.txt'
     with open(cities_file, 'r') as f:
         cities = f.read()[:-1].split(',')
     return cities
@@ -74,21 +76,20 @@ def combine_bands(folder: Path) -> np.ndarray:
     return img
 
 
-def process_city(paths: dict, city: str):
+def process_city(city: str):
 
     print(f'Preprocessing {city}')
 
-    oscd_root = Path(paths['OSCD_ROOT'])
-    preprocessed_root = Path(paths['PREPROCESSED_ROOT'])
+    dirs = paths.load_paths()
 
-    new_parent = preprocessed_root / city
+    new_parent = Path(dirs.PREPROCESSED_ROOT) / city
     new_parent.mkdir(exist_ok=True)
 
     # image data
     for t in [1, 2]:
 
         # get data
-        from_folder = oscd_root / 'images' / city / f'imgs_{t}_rect'
+        from_folder = Path(dirs.OSCD_ROOT) / 'images' / city / f'imgs_{t}_rect'
         img = combine_bands(from_folder)
 
         # save data
@@ -98,9 +99,9 @@ def process_city(paths: dict, city: str):
         save_file = to_folder / f'sentinel2_{city}_t{t}.npy'
         np.save(save_file, img)
 
-    test_cities = load_cities(paths, 'test')
+    test_cities = load_cities('test')
     dataset = 'test' if city in test_cities else 'train'
-    from_label_file = oscd_root / f'{dataset}_labels' / city / 'cm' / f'{city}-cm.tif'
+    from_label_file = Path(dirs.OSCD_ROOT) / f'{dataset}_labels' / city / 'cm' / f'{city}-cm.tif'
     label = tifffile.imread(str(from_label_file))
     label = label - 1
 
@@ -109,28 +110,26 @@ def process_city(paths: dict, city: str):
     np.save(to_label_file, label)
 
 
-def add_sentinel1(paths: dict, city: str, orbit: int):
+def add_sentinel1(city: str, orbit: int):
 
-    oscd_root = Path(paths['OSCD_ROOT'])
-    preprocessed_root = Path(paths['PREPROCESSED_ROOT'])
-    s1_folder = Path(paths['SENTINEL1_DATA'])
+    dirs = paths.load_paths()
 
-    test_cities = load_cities(paths, 'test')
+    test_cities = load_cities('test')
     dataset = 'test' if city in test_cities else 'train'
-    label_file = oscd_root / f'{dataset}_labels' / city / 'cm' / f'{city}-cm.tif'
+    label_file = Path(dirs.OSCD_ROOT) / f'{dataset}_labels' / city / 'cm' / f'{city}-cm.tif'
     label = tifffile.imread(str(label_file))
     h, w = label.shape
 
     for t in [1, 2]:
 
-        s1_file =  s1_folder / f'sentinel1_{city}_{orbit}_t{t}.tif'
+        s1_file =  Path(dirs.SENTINEL1_DATA) / f'sentinel1_{city}_{orbit}_t{t}.tif'
         img = tifffile.imread(str(s1_file))
 
         img = cv2.resize(img, (w, h), interpolation=cv2.INTER_CUBIC)
         img = img[:, :, None]
 
         # save data
-        to_folder = preprocessed_root / city / 'sentinel1'
+        to_folder = Path(dirs.PREPROCESSED_ROOT) / city / 'sentinel1'
         to_folder.mkdir(exist_ok=True)
 
         save_file = to_folder / f'sentinel1_{city}_{orbit}_t{t}.npy'
@@ -139,11 +138,8 @@ def add_sentinel1(paths: dict, city: str, orbit: int):
 
 if __name__ == '__main__':
 
-    with open(str(Path.cwd() / 'paths.yaml')) as file:
-        paths = yaml.load(file, Loader=yaml.FullLoader)
-
     for city in CITIES:
-        process_city(paths, city)
+        process_city(city)
         orbits = ORBITS[city]
         for orbit in orbits:
-            add_sentinel1(paths, city, orbit)
+            add_sentinel1(city, orbit)

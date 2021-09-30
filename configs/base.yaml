@@ -4,7 +4,7 @@ DEBUG: False
 SAVE_MODEL: True
 LOGGING: 1
 MODEL:
-  TYPE: 'unet' # should support unet, unet_lstm, siammese_conc, siamese_diff,
+  TYPE: 'unet' # unet or dualstreamunet
   TOPOLOGY: [64, 128, 256, 512,]
   OUT_CHANNELS: 1
   IN_CHANNELS: 26
@@ -29,7 +29,6 @@ TRAINER:
   LR: 5e-5
   EPOCHS: 390
   BATCH_SIZE: 64
-  OPTIMIZER: 'adam' # adam or sdg
 AUGMENTATION:
   OVERSAMPLING: 'none' # none, pixel or change
   CROP_TYPE: 'importance' # uniform or importance

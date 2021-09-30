@@ -3,7 +3,8 @@ from torch.utils import data as torch_data
 from torchvision import transforms
 from pathlib import Path
 import numpy as np
-from utils import image_arithmetics, augmentations
+from utils import image_arithmetics, augmentations, paths
+
 
 ORBITS = {
     'aguasclaras': [24],
@@ -41,7 +42,9 @@ class OSCDDataset(torch.utils.data.Dataset):
         super().__init__()
 
         self.cfg = cfg
-        self.root_dir = Path(cfg.DATASET.PATH)
+
+        dirs = paths.load_paths()
+        self.root_dir = Path(dirs.PREPROCESSED_ROOT)
 
         if dataset == 'train':
             multiplier = cfg.DATASET.TRAIN_MULTIPLIER

@@ -4,18 +4,21 @@ from torch.utils import data as torch_data
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
-from utils import networks, datasets, experiment_manager, evaluation_metrics
+from utils import networks, datasets, experiment_manager, evaluation_metrics, paths
 
 
-def visual_evaluation(root_dir: Path, cfg_file: Path, net_file: Path, dataset: str = 'test', save_dir: Path = None,
-                      label_pred_only: bool = False):
+def visual_evaluation(cfg_name: str, dataset: str = 'test', label_pred_only: bool = False):
+
+    dirs = paths.load_paths()
+
+    cfg_file = Path(dirs.HOME_ROOT) / 'configs' / f'{cfg_name}.yaml'
+    cfg = experiment_manager.load_cfg(cfg_file)
+
+    net_file = Path(dirs.OUTPUT_ROOT) / 'run_logs' / cfg_name / f'final_net.pkl'
+    net = networks.load_network(cfg, net_file)
 
     mode = 'cuda' if torch.cuda.is_available() else 'cpu'
     device = torch.device(mode)
-
-    # loading cfg and network
-    cfg = experiment_manager.load_cfg(cfg_file)
-    net = networks.load_network(cfg, net_file)
 
     # bands for visualizaiton
     s1_bands, s2_bands = cfg.DATASET.SENTINEL1_BANDS, cfg.DATASET.SENTINEL2_BANDS
@@ -67,93 +70,40 @@ def visual_evaluation(root_dir: Path, cfg_file: Path, net_file: Path, dataset: s
             for ax in axs:
                 ax.set_axis_off()
 
-            if save_dir is None:
-                save_dir = root_dir / 'evaluation' / cfg_file.stem
-            if not save_dir.exists():
-                save_dir.mkdir()
-            file = save_dir / f'eval_{cfg_file.stem}_{city}.png'
+            evaluation_dir = Path(dirs.OUTPUT_ROOT) / 'evaluation'
+            evaluation_dir.mkdir(exist_ok=True)
+
+            save_dir = evaluation_dir / cfg_name
+            save_dir.mkdir(exist_ok=True)
+            file = save_dir / f'eval_{cfg_name}_{city}.png'
 
             plt.savefig(file, dpi=300, bbox_inches='tight')
             plt.close()
 
 
-def visualize_missclassifications(root_dir: Path, cfg_file: Path, net_file: Path, save_dir: Path = None):
+def numeric_evaluation(cfg_name: str):
+
+    dirs = paths.load_paths()
+
+    cfg_file = Path(dirs.HOME_ROOT) / 'configs' / f'{cfg_name}.yaml'
+    cfg = experiment_manager.load_cfg(cfg_file)
+
+    net_file = Path(dirs.OUTPUT_ROOT) / 'run_logs' / cfg_name / f'final_net.pkl'
+    net = networks.load_network(cfg, net_file)
 
     mode = 'cuda' if torch.cuda.is_available() else 'cpu'
     device = torch.device(mode)
-
-    # loading cfg and network
-    cfg = experiment_manager.load_cfg(cfg_file)
-    net = networks.load_network(cfg, net_file)
 
     dataset = datasets.OSCDDataset(cfg, 'test', no_augmentation=True)
     dataloader_kwargs = {
         'batch_size': 1,
         'num_workers': 0,
-        'shuffle': False,
+        'shuffle': cfg.DATALOADER.SHUFFLE,
         'pin_memory': True,
     }
     dataloader = torch_data.DataLoader(dataset, **dataloader_kwargs)
-
-    with torch.no_grad():
-        net.eval()
-        for step, batch in enumerate(dataloader):
-            city = batch['city'][0]
-            print(city)
-            t1_img = batch['t1_img'].to(device)
-            t2_img = batch['t2_img'].to(device)
-            y_true = batch['label'].to(device)
-            y_pred = net(t1_img, t2_img)
-            y_pred = torch.sigmoid(y_pred)
-            y_pred = y_pred.cpu().detach().numpy()[0, ]
-            y_pred = y_pred > cfg.THRESH
-            y_pred = y_pred.transpose((1, 2, 0)).astype('uint8')[:, :, 0]
-
-            # label
-            y_true = y_true.cpu().detach().numpy()[0, ]
-            y_true = y_true.transpose((1, 2, 0)).astype('uint8')[:, :, 0]
-
-            img = np.zeros((*y_true.shape, 3))
-            true_positives = np.logical_and(y_pred, y_true)
-            false_positives = np.logical_and(y_pred, np.logical_not(y_true))
-            false_negatives = np.logical_and(np.logical_not(y_pred), y_true)
-            img[true_positives, :] = [1, 1, 1]
-            img[false_positives] = [0, 1, 0]
-            img[false_negatives] = [1, 0, 1]
-
-            fig, ax = plt.subplots()
-            ax.imshow(img)
-            ax.set_axis_off()
-
-            if save_dir is None:
-                save_dir = root_dir / 'evaluation' / cfg_file.stem
-            if not save_dir.exists():
-                save_dir.mkdir()
-            file = save_dir / f'missclassfications_{cfg_file.stem}_{city}.png'
-
-            plt.savefig(file, dpi=300, bbox_inches='tight')
-            plt.close()
-
-
-def numeric_evaluation(cfg_file: Path, net_file: Path):
 
     tta_thresholds = np.linspace(0, 1, 11)
-
-    mode = 'cuda' if torch.cuda.is_available() else 'cpu'
-    device = torch.device(mode)
-
-    # loading cfg and network
-    cfg = experiment_manager.load_cfg(cfg_file)
-    net = networks.load_network(cfg, net_file)
-    dataset = datasets.OSCDDataset(cfg, 'test', no_augmentation=True)
-
-    dataloader_kwargs = {
-        'batch_size': 1,
-        'num_workers': 0,
-        'shuffle':cfg.DATALOADER.SHUFFLE,
-        'pin_memory': True,
-    }
-    dataloader = torch_data.DataLoader(dataset, **dataloader_kwargs)
 
     def predict(t1, t2):
         pred = net(t1, t2)
@@ -249,23 +199,81 @@ def numeric_evaluation(cfg_file: Path, net_file: Path):
         # plt.show()
 
 
-def subset_pred_results(pred_results, cities):
-    indices = [i for i, city in enumerate(pred_results['city']) if city in cities]
-    for key in pred_results.keys():
-        sublist_key = [pred_results[key][i] for i in indices]
-        pred_results[key] = sublist_key
-    return pred_results
+def visualize_missclassifications(cfg_name: str):
 
+    dirs = paths.load_paths()
 
-def standard_deviation(cfg_file: Path, net_file: Path):
+    cfg_file = Path(dirs.HOME_ROOT) / 'configs' / f'{cfg_name}.yaml'
+    cfg = experiment_manager.load_cfg(cfg_file)
+
+    net_file = Path(dirs.OUTPUT_ROOT) / 'run_logs' / cfg_name / f'final_net.pkl'
+    net = networks.load_network(cfg, net_file)
 
     mode = 'cuda' if torch.cuda.is_available() else 'cpu'
     device = torch.device(mode)
 
-    # loading cfg and network
+    dataset = datasets.OSCDDataset(cfg, 'test', no_augmentation=True)
+    dataloader_kwargs = {
+        'batch_size': 1,
+        'num_workers': 0,
+        'shuffle': False,
+        'pin_memory': True,
+    }
+    dataloader = torch_data.DataLoader(dataset, **dataloader_kwargs)
+
+    with torch.no_grad():
+        net.eval()
+        for step, batch in enumerate(dataloader):
+            city = batch['city'][0]
+            print(city)
+            t1_img = batch['t1_img'].to(device)
+            t2_img = batch['t2_img'].to(device)
+            y_true = batch['label'].to(device)
+            y_pred = net(t1_img, t2_img)
+            y_pred = torch.sigmoid(y_pred)
+            y_pred = y_pred.cpu().detach().numpy()[0, ]
+            y_pred = y_pred > cfg.THRESH
+            y_pred = y_pred.transpose((1, 2, 0)).astype('uint8')[:, :, 0]
+
+            # label
+            y_true = y_true.cpu().detach().numpy()[0, ]
+            y_true = y_true.transpose((1, 2, 0)).astype('uint8')[:, :, 0]
+
+            img = np.zeros((*y_true.shape, 3))
+            true_positives = np.logical_and(y_pred, y_true)
+            false_positives = np.logical_and(y_pred, np.logical_not(y_true))
+            false_negatives = np.logical_and(np.logical_not(y_pred), y_true)
+            img[true_positives, :] = [1, 1, 1]
+            img[false_positives] = [0, 1, 0]
+            img[false_negatives] = [1, 0, 1]
+
+            fig, ax = plt.subplots()
+            ax.imshow(img)
+            ax.set_axis_off()
+
+            evaluation_dir = Path(dirs.OUTPUT_ROOT) / 'evaluation'
+            evaluation_dir.mkdir(exist_ok=True)
+
+            save_dir = evaluation_dir / cfg_name
+            save_dir.mkdir(exist_ok=True)
+            file = save_dir / f'missclassfications_{cfg_name}_{city}.png'
+
+            plt.savefig(file, dpi=300, bbox_inches='tight')
+            plt.close()
+
+
+def standard_deviation(cfg_name: str):
+
+    dirs = paths.load_paths()
+
+    cfg_file = Path(dirs.HOME_ROOT) / 'configs' / f'{cfg_name}.yaml'
     cfg = experiment_manager.load_cfg(cfg_file)
+
+    net_file = Path(dirs.OUTPUT_ROOT) / 'run_logs' / cfg_name / f'final_net.pkl'
     net = networks.load_network(cfg, net_file)
-    net.to(device).eval()
+
+    mode = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = torch.device(mode)
 
     dataset = datasets.OSCDDataset(cfg, 'test', no_augmentation=True)
     f1_scores = {}
@@ -295,20 +303,9 @@ def standard_deviation(cfg_file: Path, net_file: Path):
 
 if __name__ == '__main__':
 
-    # TODO: test this and move save paths to paths file
-    CFG_DIR = Path.cwd() / 'configs'
-    NET_DIR = Path('/storage/shafner/urban_change_detection/run_logs/')
-    STORAGE_DIR = Path('/storage/shafner/urban_change_detection')
+    cfg_name = 'fusion_dualstream_7'
 
-    dataset = 'OSCD_dataset'
-    cfg = 'fusion_dualstream_7'
-
-    cfg_file = CFG_DIR / f'{cfg}.yaml'
-    net_file = NET_DIR / cfg / 'final_net.pkl'
-
-    # visual_evaluation(STORAGE_DIR, cfg_file, net_file, 'test', 100, label_pred_only=False)
-    # visualize_missclassifications(STORAGE_DIR, cfg_file, net_file)
-    # visualize_images(STORAGE_DIR)
-    # numeric_evaluation(cfg_file, net_file)
-    standard_deviation(cfg_file, net_file)
-
+    visual_evaluation(cfg_name, 'test', label_pred_only=False)
+    numeric_evaluation(cfg_name)
+    visualize_missclassifications(cfg_name)
+    standard_deviation(cfg_name)
