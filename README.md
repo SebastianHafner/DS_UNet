@@ -1,7 +1,8 @@
-Code of the following manuscript:
+Code of the following letter:
 
-'Sentinel-1 and Sentinel-2 Data Fusion for Change Detection using a Dual Stream U-Net'
+S. Hafner, A. Nascetti, H. Azizpour and Y. Ban, "Sentinel-1 and Sentinel-2 Data Fusion for Urban Change Detection using a Dual Stream U-Net," in *IEEE Geoscience and Remote Sensing Letters*, doi: 10.1109/LGRS.2021.3119856.
 
+[[letter]](https://ieeexplore.ieee.org/document/9570476)
 
 # Abstract
 
@@ -52,21 +53,17 @@ Sentinel-1 image t1             |  Sentinel-1 image t2 |  OSCD change label
 
 ## 3 Set up paths and preprocess dataset
 
-First we need to set up the paths to our data in the paths.py file.
+First we need to set up the paths to our data in the paths.yaml file.
 
-1. Set the HOME_ROOT to this the direcotry of this repo
-
-2. Set the OSCD_ROOT variable to the root directory of the OSCD dataset:
+1. Set the OSCD_ROOT variable to the root directory of the OSCD dataset:
      * OSCD_ROOT
        * images (Onera Satellite Change Detection dataset - Images)
        * train_labels (Onera Satellite Change Detection dataset - Train Labels)
        * test_labels (Onera Satellite Change Detection dataset - Test Labels)
 
-3. Set the SENTINEL1_DATA variable to the directory containing our Sentinel-1 SAR data.
+2. Set the SENTINEL1_DATA variable to the directory containing our Sentinel-1 SAR data.
 
-4. Set the PREPROCESSED_ROOT variable to an empty directory. All data of the preprocessed dataset will be saved in this directory and accessed for training and inference.
-
-5. Set the OUTPUT_ROOT to save networks and all evaluation plots (this can be the same directory as PREPROCESSED_ROOT)
+3. Set the PREPROCESSED_ROOT variable to an empty directory. All data of the preprocessed dataset will be saved in this directory and accessed for training and inference.
 
 Then we can run preprocess.py.
 
@@ -82,9 +79,17 @@ The file evaluation.py contains a collection of functions to quantitatively and 
 
 If you find this work useful, please consider citing:
 
-* Sebastian Hafner, Andrea Nascetti, Hossein Azizpour, and Yifang Ban, "**Sentinel-1 and Sentinel-2 Data Fusion for Urban Change Detection using a Dual Stream U-Net**", in *IEEE Geoscience and Remote Sensing Letters (accepted)*, 2021
+
 
   ```bibtex
-
+    @ARTICLE{9570476,
+      author={Hafner, Sebastian and Nascetti, Andrea and Azizpour, Hossein and Ban, Yifang},
+      journal={IEEE Geoscience and Remote Sensing Letters}, 
+      title={Sentinel-1 and Sentinel-2 Data Fusion for Urban Change Detection using a Dual Stream U-Net}, 
+      year={2021},
+      volume={},
+      number={},
+      pages={1-1},
+      doi={10.1109/LGRS.2021.3119856}}
   ```
   
