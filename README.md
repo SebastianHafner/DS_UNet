@@ -21,9 +21,8 @@ Our U-Net             |  Our Dual Stream U-Net
 
 # Experimental Results
 
-U-Net and the proposed Double Stream U-Net show similar learning trends within the first 50 epochs of training (figure below) Thereafter, performance of the U-Net stagnates until the last 50 epochs of training. In contrast, our network performs evidently better after the initial training phase. Furthermore, it continues to slowly improve its performance until the end of training. With an F1 score of 0.600, the best Dual Stream U-Net outperforms its counterpart by 0.045. These results are also considerably better than the aforementioned benchmark on the original OSCD dataset (0.579). Therefore, the proposed network architecture is effective in learning from multimodal data compared to feature level data fusion.
+With an F1 score of 0.600, the Dual Stream U-Net outperforms the baseline achieved with a U-Net using feature level fusion of SAR and optical data as input by 0.045. These results are also considerably better than the benchmark on the original OSCD dataset (0.579) [[Daudt et al. 2018](https://ieeexplore.ieee.org/abstract/document/8518015)]. Therefore, the proposed network architecture is effective in learning from multimodal data.
 
-![](figures/training_comparison_fusion.png)
 
 
 | Network | Input | Precision | Recall | F1 score |
