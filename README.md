@@ -1,4 +1,4 @@
-Code of the following letter:
+Code for the following letter:
 
 S. Hafner, A. Nascetti, H. Azizpour and Y. Ban, "Sentinel-1 and Sentinel-2 Data Fusion for Urban Change Detection using a Dual Stream U-Net," in *IEEE Geoscience and Remote Sensing Letters*, doi: 10.1109/LGRS.2021.3119856.
 
