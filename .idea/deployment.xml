@@ -1,15 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
-  <component name="PublishConfigData" autoUpload="Always" serverName="shafner@king.csc.kth.se:22" autoUploadExternalChanges="true">
-    <serverData>
-      <paths name="shafner@king.csc.kth.se:22">
-        <serverdata>
-          <mappings>
-            <mapping deploy="/home/shafner/DS_UNet" local="$PROJECT_DIR$" web="/" />
-          </mappings>
-        </serverdata>
-      </paths>
-    </serverData>
+  <component name="PublishConfigData" autoUpload="Always" autoUploadExternalChanges="true">
     <option name="myAutoUpload" value="ALWAYS" />
   </component>
 </project>

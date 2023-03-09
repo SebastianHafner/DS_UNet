@@ -1,0 +1,27 @@
+{
+    "os": "Windows-10-10.0.17763-SP0",
+    "python": "3.7.10",
+    "heartbeatAt": "2023-03-09T14:11:13.049930",
+    "startedAt": "2023-03-09T14:11:11.167945",
+    "docker": null,
+    "gpu": "NVIDIA GeForce GTX 1660",
+    "gpu_count": 1,
+    "cpu_count": 16,
+    "cuda": null,
+    "args": [
+        "-c",
+        "fusion_dualstream_7"
+    ],
+    "state": "running",
+    "program": "C:/Users/shafner/repos/DS_UNet/train_network.py",
+    "codePath": "train_network.py",
+    "git": {
+        "remote": "https://github.com/SebastianHafner/DS_UNet.git",
+        "commit": "8bfa4be8319abeaeb4a00e23715584eba523aaa4"
+    },
+    "email": null,
+    "root": "C:/Users/shafner/repos/DS_UNet",
+    "host": "KTH-11632",
+    "username": "shafner",
+    "executable": "C:\\Users\\shafner\\AppData\\Local\\Continuum\\anaconda3\\envs\\local\\python.exe"
+}

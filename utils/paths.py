@@ -3,11 +3,11 @@ from pathlib import Path
 from utils.experiment_manager import CfgNode
 
 # set the paths
-HOME_ROOT = '/home/shafner/DS_UNet'
-OSCD_ROOT = '/storage/shafner/oscd_dataset'
-SENTINEL1_DATA = '/home/shafner/DS_UNet/data'
-PREPROCESSED_ROOT = '/storage/shafner/oscd_dataset_preprocessed'
-OUTPUT_ROOT = '/storage/shafner/urban_change_detection/'
+HOME_ROOT = 'C:/Users/shafner/DS_UNet'
+OSCD_ROOT = 'C:/Users/shafner/datasets/OSCD_ROOT'
+SENTINEL1_DATA = 'C:/Users/shafner/repos/DS_UNet/data'
+PREPROCESSED_ROOT = 'C:/Users/shafner/datasets/OSCD_ROOT/preprocessed_root'
+OUTPUT_ROOT = 'C:/Users/shafner/ds_unet'
 
 
 def load_paths() -> dict:

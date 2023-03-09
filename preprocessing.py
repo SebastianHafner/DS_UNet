@@ -2,8 +2,7 @@ import numpy as np
 from pathlib import Path
 import cv2
 import tifffile
-import yaml
-from utils import paths
+from utils import parsers
 
 
 def load_cities(dataset: str) -> list:
@@ -76,20 +75,20 @@ def combine_bands(folder: Path) -> np.ndarray:
     return img
 
 
-def process_city(city: str):
+def process_city(city: str, oscd_root: str, preprocessed_root: str):
 
     print(f'Preprocessing {city}')
 
     dirs = paths.load_paths()
 
-    new_parent = Path(dirs.PREPROCESSED_ROOT) / city
+    new_parent = Path(preprocessed_root) / city
     new_parent.mkdir(exist_ok=True)
 
     # image data
     for t in [1, 2]:
 
         # get data
-        from_folder = Path(dirs.OSCD_ROOT) / 'images' / city / f'imgs_{t}_rect'
+        from_folder = Path(oscd_root) / 'images' / city / f'imgs_{t}_rect'
         img = combine_bands(from_folder)
 
         # save data
@@ -101,7 +100,7 @@ def process_city(city: str):
 
     test_cities = load_cities('test')
     dataset = 'test' if city in test_cities else 'train'
-    from_label_file = Path(dirs.OSCD_ROOT) / f'{dataset}_labels' / city / 'cm' / f'{city}-cm.tif'
+    from_label_file = Path(oscd_root) / f'{dataset}_labels' / city / 'cm' / f'{city}-cm.tif'
     label = tifffile.imread(str(from_label_file))
     label = label - 1
 
@@ -110,26 +109,26 @@ def process_city(city: str):
     np.save(to_label_file, label)
 
 
-def add_sentinel1(city: str, orbit: int):
+def add_sentinel1(city: str, orbit: int, oscd_root: str, preprocessed_root: str, sentinel1_data: str):
 
     dirs = paths.load_paths()
 
     test_cities = load_cities('test')
     dataset = 'test' if city in test_cities else 'train'
-    label_file = Path(dirs.OSCD_ROOT) / f'{dataset}_labels' / city / 'cm' / f'{city}-cm.tif'
+    label_file = Path(oscd_root) / f'{dataset}_labels' / city / 'cm' / f'{city}-cm.tif'
     label = tifffile.imread(str(label_file))
     h, w = label.shape
 
     for t in [1, 2]:
 
-        s1_file =  Path(dirs.SENTINEL1_DATA) / f'sentinel1_{city}_{orbit}_t{t}.tif'
+        s1_file =  Path(sentinel1_data) / f'sentinel1_{city}_{orbit}_t{t}.tif'
         img = tifffile.imread(str(s1_file))
 
         img = cv2.resize(img, (w, h), interpolation=cv2.INTER_CUBIC)
         img = img[:, :, None]
 
         # save data
-        to_folder = Path(dirs.PREPROCESSED_ROOT) / city / 'sentinel1'
+        to_folder = Path(preprocessed_root) / city / 'sentinel1'
         to_folder.mkdir(exist_ok=True)
 
         save_file = to_folder / f'sentinel1_{city}_{orbit}_t{t}.npy'
@@ -137,7 +136,7 @@ def add_sentinel1(city: str, orbit: int):
 
 
 if __name__ == '__main__':
-
+    args = parsers.preprocessing_argument_parser().parse_known_args()[0]
     for city in CITIES:
         process_city(city)
         orbits = ORBITS[city]

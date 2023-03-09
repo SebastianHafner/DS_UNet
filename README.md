@@ -81,14 +81,14 @@ If you find this work useful, please consider citing:
 
 
   ```bibtex
-    @ARTICLE{9570476,
+    @article{hafner2021sentinel,
+      title={Sentinel-1 and Sentinel-2 data fusion for urban change detection using a dual stream u-net},
       author={Hafner, Sebastian and Nascetti, Andrea and Azizpour, Hossein and Ban, Yifang},
-      journal={IEEE Geoscience and Remote Sensing Letters}, 
-      title={Sentinel-1 and Sentinel-2 Data Fusion for Urban Change Detection using a Dual Stream U-Net}, 
+      journal={IEEE Geoscience and Remote Sensing Letters},
+      volume={19},
+      pages={1--5},
       year={2021},
-      volume={},
-      number={},
-      pages={1-1},
-      doi={10.1109/LGRS.2021.3119856}}
+      publisher={IEEE}
+    }
   ```
   

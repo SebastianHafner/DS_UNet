@@ -8,14 +8,13 @@ from pathlib import Path
 import torch
 from torch.utils import data as torch_data
 
-from utils import experiment_manager, networks, loss_functions, datasets, evaluation_metrics, paths
+from utils import experiment_manager, networks, loss_functions, datasets, evaluation_metrics, paths, parsers
 
 # logging
 import wandb
 
 
 def train(net, cfg):
-
     # setting device on GPU if available, else CPU
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print('Using device:', device)
@@ -172,10 +171,8 @@ def model_evaluation(net, cfg, device, thresholds, run_type, epoch, step):
 
 
 if __name__ == '__main__':
-
     # setting up config based on parsed argument
-    parser = experiment_manager.default_argument_parser()
-    args = parser.parse_known_args()[0]
+    args = parsers.training_argument_parser().parse_known_args()[0]
     cfg = experiment_manager.setup(args)
 
     # deterministic training
